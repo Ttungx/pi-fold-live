@@ -18,6 +18,18 @@ export function recordedThinkingLabel(sources: readonly string[]): string {
   return truncateToWidth(extract || "Recorded thinking", 80, "…");
 }
 
+/** The newest recorded thinking line, for the one-row live view. It keeps the
+ * tail of a growing paragraph so the row reads as continuous progress rather
+ * than a label that changes only between segments. */
+export function flowingThinkingLabel(sources: readonly string[]): string {
+  const tail = (sources.at(-1) || "").slice(-512).replace(/[\uD800-\uDBFF]$/, "");
+  const line = tail.split(/\r?\n/).map(value => value.trim()).filter(Boolean).at(-1) || "Recorded thinking";
+  const text = line.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_match, bold, underlined) => bold || underlined)
+    .replace(/`([^`]+)`/g, "$1").replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim() || "Recorded thinking";
+  const tailOnly = Array.from(text).length > 79 ? `\u2026${Array.from(text).slice(-78).join("")}` : text;
+  return truncateToWidth(tailOnly, 80, "\u2026");
+}
+
 const hasThinking = (message: any) => (message?.content || []).some((b: any) => b.type === "thinking" && typeof b.thinking === "string" && b.thinking.trim());
 // A leading run can join earlier rounds only before the first visible reply.
 // Track this separately from the broad boundary kind during streaming updates.
@@ -53,22 +65,38 @@ export class ModernThinkingGroups {
   private epoch = 0;
   private groups: ThinkingGroup[] = [];
   private selected?: ThinkingGroup;
-  private followOpened = new WeakSet<ToolPane>();
-  private manual = new WeakSet<ToolPane>();
+  /** Follow holds one row for a whole thinking phase, not for one segment. */
+  private followPhase = false;
+  private replaying = false;
   private layouts = new WeakMap<object, { width: number; height: number }>();
   focused = false;
   constructor(private enabled: () => boolean, private theme: () => any, private focus: (inspection?: { target: (component: any) => boolean; label: string }) => void, private inspectionEnded: () => void = () => {}, private follow: () => boolean = () => false) {}
-  clear() { this.records = []; this.followOpened = new WeakSet(); this.manual = new WeakSet(); this.aliases = new WeakMap(); this.components = new WeakMap(); this.boundaries = new WeakSet(); this.layouts = new WeakMap(); this.live = undefined; this.groups = []; this.selected = undefined; this.focused = false; this.dirty = true; this.epoch++; }
+  clear() { this.records = []; this.followPhase = false; this.aliases = new WeakMap(); this.components = new WeakMap(); this.boundaries = new WeakSet(); this.layouts = new WeakMap(); this.live = undefined; this.groups = []; this.selected = undefined; this.focused = false; this.dirty = true; this.epoch++; }
   rebuild(entries: readonly any[]) {
     this.clear();
-    for (const entry of entries) {
-      if (entry.type === "message") this.observe("end", entry.message);
-      else if (["compaction", "branch_summary"].includes(entry.type) || entry.type === "custom_message" && entry.display !== false) this.records.push(null);
-    }
+    // Replayed history is settled: no phase, no flowing label. Only live events
+    // open a thinking phase.
+    this.replaying = true;
+    try {
+      for (const entry of entries) {
+        if (entry.type === "message") this.observe("end", entry.message);
+        else if (["compaction", "branch_summary"].includes(entry.type) || entry.type === "custom_message" && entry.display !== false) this.records.push(null);
+      }
+    } finally { this.replaying = false; }
+  }
+  /** A thinking phase starts with recorded reasoning and ends at the next action:
+   * a visible reply, a tool result, a terminal stop reason, or a tool start. */
+  private trackFollowPhase(phase: "start" | "update" | "end", message: any) {
+    if (this.replaying) { this.followPhase = false; return; }
+    if (message.role !== "assistant") { this.followPhase = false; return; }
+    const visible = Array.isArray(message.content) && message.content.some((block: any) => block.type === "text" && block.text?.trim());
+    if (visible || phase === "end" && ["stop", "error", "aborted", "length"].includes(message.stopReason)) this.followPhase = false;
+    else if (hasThinking(message)) this.followPhase = true;
   }
   observe(phase: "start" | "update" | "end", message: any) {
     if (!message || typeof message !== "object") return;
     this.epoch++;
+    this.trackFollowPhase(phase, message);
     if (message.role !== "assistant") {
       if (boundary(message) && !this.boundaries.has(message)) { this.records.push(null); this.boundaries.add(message); this.live = undefined; this.dirty = true; }
       return;
@@ -139,22 +167,21 @@ export class ModernThinkingGroups {
   }
   private choose(group: ThinkingGroup) {
     this.selected = group; this.focused = true;
-    this.manual.add(group.pane);
     const component = group.members.at(-1)?.component;
     this.focus({ target: candidate => candidate === component, label: `Thinking · ${group.members.length} round${group.members.length === 1 ? "" : "s"}` });
   }
   private release() { this.focused = false; this.inspectionEnded(); }
-  /** Follow: the round that is still streaming keeps its pane open, the one it
-   * replaced folds back. A manual open or Pi's Ctrl+T keeps its own state. */
-  private followLive() {
-    const record = this.follow() ? this.live : undefined;
-    const live = record?.group && record.group.members.at(-1) === record && this.active(record.group) ? record.group : undefined;
-    for (const group of this.groups) {
-      const pane = group.pane;
-      if (group === live && !this.manual.has(pane)) {
-        if (!pane.open) { pane.open = true; this.followOpened.add(pane); }
-      } else if (this.followOpened.has(pane) && !this.manual.has(pane)) { pane.open = false; this.followOpened.delete(pane); }
-    }
+  /** The next action owns the screen again: the thinking row folds on its own. */
+  endFollowPhase(): boolean {
+    if (!this.followPhase) return false;
+    this.followPhase = false;
+    return true;
+  }
+  /** Follow shows one row for the running thinking phase. Consecutive segments
+   * belong to the same phase, so nothing opens or closes between them. */
+  private followTarget(): ThinkingGroup | undefined {
+    if (!this.follow() || !this.followPhase) return;
+    for (let index = this.groups.length - 1; index >= 0; index--) if (this.active(this.groups[index])) return this.groups[index];
   }
   private sources(group: ThinkingGroup) {
     let changed = group.pane.actions.length !== group.members.length || group.pane.actions.some((action, index) => action.id !== String(group.members[index]?.id));
@@ -193,10 +220,13 @@ export class ModernThinkingGroups {
     if (!match) return;
     const { record, group } = match;
     if (group.members.at(-1) !== record) return [];
-    this.followLive();
     const pane = group.pane, theme = this.theme();
     this.sources(group);
-    pane.title = group.members.length === 1 ? `Thinking · ${pane.actions[0]?.label || "Recorded thinking"}` : `Thinking · ${group.members.length} rounds`;
+    // A running phase reads as one row whose text keeps moving; an opened pane
+    // and every finished phase keep the stable recorded label.
+    const flowing = !pane.open && this.followTarget() === group;
+    pane.title = flowing ? `Thinking · ${flowingThinkingLabel(group.members.at(-1)?.sources ?? [])}`
+      : group.members.length === 1 ? `Thinking · ${pane.actions[0]?.label || "Recorded thinking"}` : `Thinking · ${group.members.length} rounds`;
     pane.directContent = group.members.length === 1;
     pane.focused = this.focused && this.selected === group;
     pane.theme = theme; pane.headingTone = "thinkingText"; pane.itemName = "round";
@@ -210,7 +240,7 @@ export class ModernThinkingGroups {
     if (!match || match.group.members.at(-1) !== match.record || !layout || event.x < 0 || event.x >= layout.width || event.y < 1 || event.y >= layout.height) return;
     // Mouse inspection never takes keyboard focus from the native editor.
     const handled = match.group.pane.handleMouse({ ...event, y: event.y - 1 });
-    if (handled) { this.manual.add(match.group.pane); this.focused = false; match.group.pane.focused = false; this.focus(); }
+    if (handled) { this.focused = false; match.group.pane.focused = false; this.focus(); }
     return handled;
   }
   input(data: string): boolean {
@@ -225,7 +255,7 @@ export class ModernThinkingGroups {
     }
     if (!this.focused || !this.active(this.selected)) { this.focused = false; return false; }
     if (matchesKey(data, "escape")) { this.release(); return true; }
-    if (this.selected.pane.handle(data)) { this.manual.add(this.selected.pane); return true; }
+    if (this.selected.pane.handle(data)) return true;
     this.release();
     return false;
   }
@@ -263,6 +293,8 @@ export function registerModernThinking(pi: ExtensionAPI, mode: DisplayMode, foll
   for (const event of ["session_start", "session_tree", "session_compact"] as const) subscriptions.push(pi.on(event, rebuild));
   for (const [event, phase] of [["message_start", "start"], ["message_update", "update"], ["message_end", "end"]] as const) subscriptions.push(pi.on(event, (event: any) => groups?.observe(phase, event.message)));
   subscriptions.push(pi.on("ui_prompt_start", () => { if (groups) groups.focused = false; }));
+  // The next action owns the screen: the thinking row folds before the tool runs.
+  subscriptions.push(pi.on("tool_execution_start", () => { if (groups?.endFollowPhase()) redraw?.(); }));
   subscriptions.push(pi.on("session_shutdown", stop));
   subscriptions.push(pi.events.on("compact-renderer:disclosures:v1", (request: any) => groups?.disclosures(request)));
   subscriptions.push(pi.events.on("compact-renderer:inspect:v1", (event: any) => { for (const choice of groups?.inspectionChoices() || []) event?.add?.(choice); }));

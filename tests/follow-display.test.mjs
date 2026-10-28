@@ -75,7 +75,8 @@ try {
   dispose(); mode.dispose(); follow.dispose();
 }
 
-// 4. Thinking follows the same rule inside its own adapter.
+// 4. Thinking holds one row for the whole phase: the label flows with the newest
+//    recorded text, and the next action folds it instead of every segment.
 {
   const local = new Map(), cards = [];
   const thinkingMode = createDisplayMode(), thinkingFollow = createDisplayMode();
@@ -88,31 +89,58 @@ try {
   } };
   const stop = registerModernThinking(thinkingPi, thinkingMode, thinkingFollow);
   const emitThinking = (name, value = {}) => { for (const fn of [...(local.get(name) || [])]) fn(value, thinkingCtx); };
-  emitThinking('session_start');
-  const round = n => ({ role: 'assistant', stopReason: 'toolUse', content: [
-    { type: 'thinking', thinking: `LIVE_THINKING_BODY_${n}` },
-    { type: 'toolCall', id: `call-${n}`, name: 'read', arguments: {} },
+  const round = (id, thinking, stopReason = 'toolUse') => ({ role: 'assistant', stopReason, content: [
+    { type: 'thinking', thinking },
+    { type: 'toolCall', id, name: 'read', arguments: {} },
   ] });
+  const paint = card => stripAnsi(card.render(120).join(String.fromCharCode(10)));
   try {
-    const firstMessage = round(1), firstCard = new core.AssistantMessageComponent(firstMessage, true);
+    emitThinking('session_start');
+    // Streaming segment 1: one row, label flows with the newest line.
+    const first = round('call-1', 'Segment one');
+    const firstCard = new core.AssistantMessageComponent(first, true);
     cards.push(firstCard);
-    emitThinking('message_start', { message: firstMessage });
+    emitThinking('message_start', { message: first });
     thinkingCtx.ui.setHiddenThinkingLabel();
-    assert.match(stripAnsi(firstCard.render(120).join('\n')), /LIVE_THINKING_BODY_1/, 'the streaming thinking round opens');
+    assert.match(paint(firstCard), /Thinking · Segment one/);
+    assert.equal(firstCard.render(120).length, 2, 'the running phase keeps a single row');
 
-    const secondMessage = round(2), secondCard = new core.AssistantMessageComponent(secondMessage, true);
+    const grown = round('call-1', 'Segment one' + String.fromCharCode(10) + 'Considering the failure path');
+    emitThinking('message_update', { message: grown });
+    firstCard.updateContent(grown, true);
+    thinkingCtx.ui.setHiddenThinkingLabel();
+    assert.match(paint(firstCard), /Thinking · Considering the failure path/, 'the row follows the newest recorded line');
+    assert.equal(firstCard.render(120).length, 2, 'growth does not open the pane');
+
+    // Segment 2 of the same phase: no fold, no reopen.
+    emitThinking('message_end', { message: grown });
+    const second = round('call-2', 'Second segment reasoning');
+    const secondCard = new core.AssistantMessageComponent(second, true);
     cards.push(secondCard);
-    emitThinking('message_start', { message: secondMessage });
+    emitThinking('message_start', { message: second });
     thinkingCtx.ui.setHiddenThinkingLabel();
-    secondCard.render(120);
-    assert.doesNotMatch(stripAnsi(firstCard.render(120).join('\n')), /LIVE_THINKING_BODY_1/, 'the previous thinking round folds');
-    assert.match(stripAnsi(secondCard.render(120).join('\n')), /LIVE_THINKING_BODY_2/, 'the newest thinking round follows');
+    assert.match(paint(secondCard), /Thinking · Second segment reasoning/, 'the next segment continues in the same row');
+    assert.equal(secondCard.render(120).length, 2, 'a new segment never reopens the pane');
+    assert.equal(firstCard.render(120).length, 0, 'earlier segments stay folded');
 
+    // The next action ends the phase: the row folds to its recorded summary.
+    emitThinking('tool_execution_start', { toolCallId: 'call-2', toolName: 'read' });
+    const folded = paint(secondCard);
+    assert.match(folded, /Thinking · 2 rounds/, 'the whole phase folds when the next action starts');
+    assert.doesNotMatch(folded, /Second segment reasoning/);
+    assert.equal(secondCard.render(120).length, 2, 'a finished phase keeps one row');
+
+    // Follow off keeps the recorded label even while thinking streams.
     thinkingFollow.setEnabled(false);
-    assert.doesNotMatch(stripAnsi(secondCard.render(120).join('\n')), /LIVE_THINKING_BODY_2/, 'follow off folds the live thinking round');
+    const third = round('call-3', 'Third segment reasoning');
+    const thirdCard = new core.AssistantMessageComponent(third, true);
+    cards.push(thirdCard);
+    emitThinking('message_start', { message: third });
+    thinkingCtx.ui.setHiddenThinkingLabel();
+    assert.doesNotMatch(paint(thirdCard), /Third segment reasoning/, 'follow off does not stream the label');
   } finally {
     stop(); thinkingMode.dispose(); thinkingFollow.dispose();
   }
 }
 
-console.log('Follow display: live action open, previous folded, finished folded, follow off, manual override, thinking lifecycle passed');
+console.log('Follow display: live action open, previous folded, finished folded, follow off, manual override and a flowing thinking row passed');
