@@ -148,3 +148,18 @@ function fixture(hasUI = true) {
 }
 
 console.log('Pi Fold command: mode, work routing, menus, cancellation, shortcut, no-UI and root lifecycle passed');
+
+// The follow display is a session-local toggle, with and without a menu.
+{
+  const mode = createDisplayMode(), follow = createDisplayMode(), commands = new Map(), notices = [];
+  const work = { dispose() {}, setExpanded: () => true, isShortcutEnabled: () => true, setShortcutEnabled() {} };
+  registerFoldCommand({ registerCommand: (name, command) => commands.set(name, command) }, mode, work, undefined, follow);
+  const ctx = { hasUI: false, ui: { notify: message => notices.push(message), select: () => { throw new Error('no-UI commands must not open a menu'); } } };
+  const run = args => commands.get('fold').handler(args, ctx);
+  await run('status'); assert.match(notices.at(-1), /Pi Fold on/);
+  await run('follow off'); assert.equal(follow.isEnabled(), false); assert.equal(notices.at(-1), 'Follow the running action: off');
+  await run('follow on'); assert.equal(follow.isEnabled(), true); assert.equal(notices.at(-1), 'Follow the running action: on');
+  await run('follow toggle'); assert.match(notices.at(-1), /^Use \/fold /);
+  assert.equal(follow.isEnabled(), true, 'an unknown follow argument changes nothing');
+  follow.dispose(); mode.dispose();
+}
