@@ -1,0 +1,6 @@
+node_modules/
+.tmp-runtime/
+*.bak
+*.bak-*
+*.log
+HANDOFF-pi-fold.md

@@ -1,0 +1,68 @@
+{
+  "name": "pi-fold-live",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Pi Fold Live: readable Pi transcripts with collapsible work, a live action that stays open, and native final replies",
+  "license": "MIT",
+  "author": "Ttungx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ttungx/pi-fold-live.git"
+  },
+  "scripts": {
+    "test": "node scripts/test.mjs",
+    "preview": "node scripts/preview.mjs",
+    "preview:work": "node scripts/preview-work-strip.mjs",
+    "benchmark": "node --expose-gc scripts/performance-review.mjs",
+    "benchmark:memory": "node --expose-gc scripts/retained-memory-review.mjs",
+    "test:compatibility": "node scripts/compatibility-check.mjs --pi latest"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "files": [
+    "index.ts",
+    "src/*.ts",
+    "tests/*.mjs",
+    "tests/fixtures/*.ts",
+    "scripts/*.mjs",
+    "docs/*.md",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "terminal",
+    "tui",
+    "pi-fold",
+    "pi-fold-live",
+    "transcript",
+    "follow"
+  ],
+  "homepage": "https://github.com/Ttungx/pi-fold-live#readme",
+  "bugs": {
+    "url": "https://github.com/Ttungx/pi-fold-live/issues"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.4.0",
+    "@earendil-works/pi-tui": "^1.4.0",
+    "jiti": "^2.7.0",
+    "pi-prompt-jump": "^0.1.0",
+    "pi-subagents": "^0.83.1"
+  }
+}

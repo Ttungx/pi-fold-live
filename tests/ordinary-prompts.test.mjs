@@ -1,0 +1,166 @@
+import assert from 'node:assert/strict';
+import { loadSource, loadAgent, core, themeModule, stripAnsi, tui, assertCardBackground } from './test-runtime.mjs';
+
+const { registerModernPrompts } = await loadSource('./modern-prompts.ts');
+const { createDisplayMode } = await loadSource('./display-mode.ts');
+const { SkillInvocationMessageComponent } = await loadAgent('modes/interactive/components/skill-invocation-message.js');
+const { UserMessageComponent, VERSION } = core;
+const nativeRender = UserMessageComponent.prototype.render;
+const listeners = new Map(), bus = new Map(), terminal = new Set(), transformers = [];
+const subscribe = (map, event, fn) => {
+  const set = map.get(event) || new Set(); map.set(event, set); set.add(fn); return () => set.delete(fn);
+};
+const pi = {
+  on: (event, fn) => subscribe(listeners, event, fn),
+  events: { on: (event, fn) => subscribe(bus, event, fn), emit(event, data) { for (const fn of [...bus.get(event) || []]) fn(data); } },
+  getCommands: () => [], registerMarkdownTransformer: fn => transformers.push(fn),
+};
+const ctx = { mode: 'tui', ui: { theme: themeModule.theme, setHiddenThinkingLabel() {}, onTerminalInput(fn) { terminal.add(fn); return () => terminal.delete(fn); } } };
+const emit = event => { for (const fn of [...listeners.get(event) || []]) fn({}, ctx); };
+const key = data => [...terminal].some(fn => fn(data)?.consume);
+const plain = (card, width = 80) => card.render(width).map(stripAnsi).join('\n');
+const source = count => Array.from({ length: count }, (_, n) => `Recorded row ${n + 1} 行🙂`).join('  \n');
+const card = text => new UserMessageComponent(text, themeModule.getMarkdownTheme(), 1, transformers);
+const collapsedControl = (component, width) => {
+  const rows = component.render(width), text = rows.map(stripAnsi);
+  const start = text.findIndex(row => row.trim().startsWith('⋯'));
+  assert.ok(start > 0, 'collapsed prompt has a generic Show more control');
+  let end = start + 1;
+  while (end < text.length && text[end].trim()) end++;
+  assert.equal(text.slice(start, end).map(row => row.trim()).join(' '), '⋯ Show more', 'control has no prompt-specific heading or inspection suffix');
+  assert.equal(text[start - 1].trim(), '', 'one blank row precedes the control');
+  assert.notEqual(text[start - 2].trim(), '', 'opening has no trailing blank boundary');
+  assert.equal(text[end].trim(), '', 'one blank row follows the complete wrapped control');
+  assert.notEqual(text[end + 1].trim(), '', 'ending has no leading blank boundary');
+  assert.ok(rows[start].includes(themeModule.theme.getFgAnsi('muted')), 'control uses the native muted foreground');
+  assert.doesNotMatch(rows.slice(start, end).join(''), /\x1b\[1m/, 'control is not bold');
+  assertCardBackground(rows.map(row => row.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')), width, 'userMessageBg');
+  return { rows, start, end };
+};
+const mode = createDisplayMode();
+const skill = new SkillInvocationMessageComponent({ name: 'recorded-skill', content: source(12) });
+const skillCollapsed = skill.render(80);
+const dispose = registerModernPrompts(pi, mode);
+try {
+  emit('session_start');
+  assert.deepEqual(skill.render(80), skillCollapsed, 'native skill card stays unchanged');
+  skill.setExpanded(true); assert.match(plain(skill), /Recorded row 12/); assert.doesNotMatch(plain(skill), /Show less/);
+  const eight = card(source(8)), nine = card(source(9));
+  assert.equal(nativeRender.call(eight, 80).length, 10, 'fixture has eight native body rows');
+  assert.equal(nativeRender.call(nine, 80).length, 11, 'fixture has nine native body rows');
+  assert.doesNotMatch(plain(eight), /Show more/, 'eight rendered lines stay open');
+  const full = nativeRender.call(nine, 80);
+  const folded = nine.render(80);
+  assert.deepEqual(folded.slice(0, 4), full.slice(0, 4), 'excerpt preserves exactly three native rendered rows and top padding');
+  assert.deepEqual(folded.slice(-3), full.slice(-3), 'ending retains exactly the last two native body rows and terminal padding');
+  assert.equal((plain(nine).match(/Recorded row 1 /g) || []).length, 1, 'opening is not duplicated');
+  assert.equal((plain(nine).match(/Recorded row 9 /g) || []).length, 1, 'ending is not duplicated');
+  collapsedControl(nine, 80);
+  assert.match(plain(nine), /Show more/);
+  assert.doesNotMatch(plain(nine), /Recorded row 4/);
+  assert.deepEqual(folded.at(-1), full.at(-1), 'native prompt-zone end and padding remain intact');
+  assert.equal(nine.text, source(9), 'folding does not change recorded text');
+  assert.equal(nine.handleMouse({ type: 'click', button: 'left', x: 3, y: 4, width: 80, height: 20 })?.handled, undefined, 'the opening-to-control gap does not toggle the card');
+  assert.ok(nine.handleMouse({ type: 'click', button: 'left', x: 3, y: 5, width: 80, height: 20 })?.handled);
+  const expanded = nine.render(80);
+  assert.deepEqual(expanded.slice(0, full.length - 1), full.slice(0, -1), 'expanded body retains every native formatted row');
+  assert.match(plain(nine), /Recorded row 9/);
+  assert.match(plain(nine), /Show less/);
+  assert.equal(expanded.at(-2).includes(themeModule.theme.getFgAnsi('muted')), true, 'bottom Show less control uses muted text');
+  assert.equal(stripAnsi(expanded.at(-3)).trim(), '', 'one filled gap precedes the expanded control');
+  assert.notEqual(stripAnsi(expanded.at(-4)).trim(), '', 'expanded control gap does not duplicate trailing body spacing');
+  assertCardBackground(expanded.slice(-3).map(row => row.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')), 80, 'userMessageBg');
+  assert.equal(nine.handleMouse({ type: 'click', button: 'left', x: 3, y: 10, width: 80, height: 20 })?.handled, undefined, 'expanded gap is outside the disclosure target');
+  assert.ok(nine.handleMouse({ type: 'click', button: 'left', x: 3, y: 11, width: 80, height: 20 })?.handled);
+  assert.doesNotMatch(plain(nine), /Recorded row 5/);
+  assert.equal(key('\r'), false, 'clicking leaves editor input native');
+  const choices = [];
+  pi.events.emit('compact-renderer:inspect:v1', { add: choice => choices.push(choice) });
+  assert.equal(choices.length, 1, 'only the long ordinary prompt enters inspection');
+  assert.match(choices[0].label, /^Submitted prompt — Recorded row 1/);
+  choices[0].focus();
+  assert.match(plain(nine), /Recorded row 9/);
+  assert.match(plain(nine), /▴ Show less/);
+  assert.match(plain(nine), /Esc returns/, 'keyboard hints appear only during explicit inspection');
+  assert.equal(key('\r'), true); assert.match(plain(nine), /Show more/);
+  assert.equal(key('\x1b'), true); assert.equal(key('\r'), false);
+  assert.equal(key('\x1bi'), true); assert.equal(key('x'), false); assert.equal(key('\r'), false, 'typing releases inspection');
+  const paragraphs = card('OPENING_PARAGRAPH\n\n' + Array.from({ length: 10 }, (_, n) => `- MIDDLE_ITEM_${n + 1}`).join('\n') + '\n\nENDING_LINE_ONE  \nENDING_LINE_TWO  \nENDING_LINE_THREE');
+  const paragraphNative = nativeRender.call(paragraphs, 80), paragraphCollapsed = collapsedControl(paragraphs, 80);
+  assert.deepEqual(paragraphCollapsed.rows.slice(0, 2), paragraphNative.slice(0, 2), 'opening stops before the first paragraph separator');
+  assert.deepEqual(paragraphCollapsed.rows.slice(-3), paragraphNative.slice(-3), 'ending takes the last two rows of the last paragraph');
+  assert.doesNotMatch(plain(paragraphs), /MIDDLE_ITEM_|ENDING_LINE_ONE/, 'collapsed opening does not append a partial list and tail stays bounded');
+  assert.match(plain(paragraphs), /OPENING_PARAGRAPH[\s\S]*ENDING_LINE_TWO[\s\S]*ENDING_LINE_THREE/);
+  paragraphs.handleMouse({ type: 'click', button: 'left', x: 3, y: paragraphCollapsed.start, width: 80, height: paragraphCollapsed.rows.length });
+  assert.deepEqual(paragraphs.render(80).slice(0, -3), paragraphNative.slice(0, -1), 'expanded prompt retains all native paragraphs and list formatting');
+  assert.match(plain(paragraphs), /MIDDLE_ITEM_1[\s\S]*MIDDLE_ITEM_10[\s\S]*ENDING_LINE_ONE/);
+  const singleParagraph = card('HEAD_TOKEN ' + 'recorded middle words '.repeat(80) + ' TAIL_TOKEN');
+  for (const width of [8, 16, 24, 80]) {
+    const native = nativeRender.call(singleParagraph, width), view = collapsedControl(singleParagraph, width);
+    assert.deepEqual(view.rows.slice(0, 4), native.slice(0, 4), `width ${width} preserves three opening native rows`);
+    assert.deepEqual(view.rows.slice(-3), native.slice(-3), `width ${width} preserves two ending native rows`);
+    assert.ok(view.rows.length < native.length, 'long single paragraphs use disjoint bounded head/tail excerpts');
+  }
+  assert.equal((plain(singleParagraph).match(/HEAD_TOKEN/g) || []).length, 1);
+  assert.equal((plain(singleParagraph).match(/TAIL_TOKEN/g) || []).length, 1);
+  const nativeTheme = nine.children[0].theme;
+  nine.children[0].theme = Object.assign(Object.create(nativeTheme), { bold: text => `\x1b[1m${text}\x1b[22m` });
+  try { nine.invalidate(); collapsedControl(nine, 80); }
+  finally { nine.children[0].theme = nativeTheme; nine.invalidate(); }
+  const wrapped = card('漢🙂 word '.repeat(30));
+  assert.doesNotMatch(plain(wrapped, 160), /Show more/, 'wide prompt stays open at eight lines or fewer');
+  assert.match(plain(wrapped, 24), /Show more/, 'narrow viewport remeasures native wrapping');
+  assert.doesNotMatch(plain(wrapped, 160), /Show more/, 'returning to wide viewport restores short native presentation');
+  for (const width of [1, 2, 8, 24]) {
+    const rows = wrapped.render(width);
+    const nativeLimit = Math.max(width, ...nativeRender.call(wrapped, width).map(tui.visibleWidth));
+    assert.ok(rows.every(row => tui.visibleWidth(row) <= nativeLimit), `width ${width} stays within the native Unicode/padding limit`);
+  }
+  const resizable = card('RESIZABLE_PROMPT ' + 'word '.repeat(100));
+  const promptChoices = () => { const choices = []; pi.events.emit('compact-renderer:inspect:v1', { add: choice => choices.push(choice) }); return choices; };
+  assert.match(plain(resizable, 24), /Show more/);
+  const resizeChoice = promptChoices().find(choice => choice.label.includes('RESIZABLE_PROMPT'));
+  resizeChoice.focus();
+  assert.match(plain(resizable, 24), /Show less/, 'inspection manually expands the narrow prompt');
+  assert.doesNotMatch(plain(resizable, 160), /Show more|Show less/, 'a temporarily short prompt uses native display');
+  assert.ok(!promptChoices().some(choice => choice.label.includes('RESIZABLE_PROMPT')), 'temporarily short cards are omitted from the picker');
+  resizeChoice.focus(); assert.equal(key('\r'), false, 'a stale picker choice cannot focus a temporarily short card');
+  assert.equal(resizable.handleMouse({ type: 'click', button: 'left', x: 3, y: 4, width: 160, height: 20 })?.handled, undefined, 'old control coordinates cannot toggle native short display');
+  assert.equal(key('\x1bi'), true); assert.match(plain(wrapped, 24), /Show more/, 'Alt+I skips the most recent inactive card'); assert.equal(key('\r'), true, 'Alt+I selected another eligible prompt');
+  assert.equal(key('\x1b'), true);
+  assert.match(plain(resizable, 24), /Show less/, 'manual expansion survives growing below the threshold and narrowing again');
+  const resizeRows = resizable.render(24).map(stripAnsi);
+  const collapseRow = resizeRows.findIndex(row => row.includes('Show less'));
+  resizable.handleMouse({ type: 'click', button: 'left', x: 3, y: collapseRow, width: 24, height: resizeRows.length });
+  assert.match(plain(resizable, 24), /Show more/);
+  plain(resizable, 160);
+  assert.match(plain(resizable, 24), /Show more/, 'manual collapse also survives a short-width interval');
+  const narrowChoice = promptChoices().find(choice => choice.label.includes('RESIZABLE_PROMPT'));
+  narrowChoice.focus(); assert.equal(key('\r'), true);
+  const focusedRows = resizable.render(24), focusedText = focusedRows.map(stripAnsi);
+  const focusedStart = focusedText.findIndex(row => row.includes('⋯ Show more'));
+  let focusedEnd = focusedStart + 1;
+  while (focusedEnd < focusedText.length && focusedText[focusedEnd].trim()) focusedEnd++;
+  assert.ok(focusedEnd - focusedStart > 1, 'narrow focused control wraps its keyboard hints');
+  assert.match(focusedText.slice(focusedStart, focusedEnd).join('\n'), /Esc\s+returns/);
+  assert.equal(resizable.handleMouse({ type: 'click', button: 'left', x: 3, y: focusedEnd - 1, width: 24, height: focusedRows.length })?.handled, true, 'last wrapped control row retains the disclosure mouse target');
+  assert.match(plain(resizable, 24), /▴ Show less/);
+  assert.doesNotMatch(plain(resizable, 24), /Esc\s+returns/, 'mouse expansion returns the control to its generic label');
+  assert.equal(key('\r'), false, 'mouse expansion releases keyboard inspection');
+  mode.setEnabled(false); assert.match(plain(nine), /Recorded row 9/); assert.doesNotMatch(plain(nine), /Show more/);
+  mode.setEnabled(true); assert.match(plain(nine), /Show more/);
+  const formatting = card('# A recorded heading\n\n```js\n' + Array.from({ length: 12 }, (_, n) => `const n${n} = ${n};`).join('\n') + '\n```\n\n[attachment: recorded.txt]');
+  plain(formatting);
+  const formattingChoice = [];
+  pi.events.emit('compact-renderer:inspect:v1', { add: choice => formattingChoice.push(choice) });
+  formattingChoice.find(choice => choice.label.includes('A recorded heading')).focus();
+  assert.match(plain(formatting), /const n11 = 11;/);
+  assert.match(plain(formatting), /attachment: recorded.txt/);
+  assert.equal(formatting.text.endsWith('[attachment: recorded.txt]'), true);
+  const unknown = card(source(9)); plain(unknown); unknown.children.push({ render: () => ['external attachment'], invalidate() {} });
+  assert.match(plain(unknown), /Recorded row 9/, 'unsupported user-component shapes retain native text and attachments');
+  assert.match(plain(unknown), /external attachment/);
+  emit('session_tree'); assert.match(plain(nine), /Show more/); assert.equal(key('\r'), false);
+  emit('session_shutdown'); assert.match(plain(nine), /Recorded row 9/); assert.equal(terminal.size, 0);
+  console.log('ordinary prompts: actual Pi 1.3.0 rendered-line threshold, exact excerpt/full source, native formatting, width changes, click/inspection, mode and lifecycle passed');
+} finally { dispose(); }

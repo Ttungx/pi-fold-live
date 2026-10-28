@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createWorkStripPreview } from '../scripts/preview-work-strip.mjs';
+
+const preview = await createWorkStripPreview({ actionGroups: true });
+const { core, runtime, manager } = preview;
+const { theme, initTheme } = await import(pathToFileURL(path.join(preview.agentRoot, 'dist/modes/interactive/theme/theme.js')));
+initTheme('dark', false);
+const plain = value => value.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+const errors = [];
+runtime.session.extensionRunner.onError(error => errors.push(error));
+const ui = new core.InteractiveMode(runtime, { tuiMode: 'fullscreen' });
+ui.updateTerminalTitle = () => {};
+Object.defineProperty(ui.ui, 'isFollowingOutput', { get: () => true });
+runtime.session.extensionRunner.setUIContext({ ...ui.createExtensionUIContext(), theme, onTerminalInput() { return () => {}; }, setHiddenThinkingLabel() {}, setStatus() {}, setWidget() {}, notify() {} }, 'tui');
+const paint = () => plain(ui.chatContainer.render(140).join('\n'));
+try {
+  ui.renderSessionEntries(manager.getBranch());
+  await runtime.session.extensionRunner.emit({ type: 'session_start', reason: 'resume' });
+  ui.chatContainer.invalidate();
+  assert.match(paint(), /Mixed-action preview:/, 'final reply remains visible while work is folded');
+  const projected = ui.chatContainer[Symbol.for('compact-renderer:projected-children:v1')];
+  const work = projected.findLast(row => row.constructor.name === 'WorkStripHeader');
+  work.render(140);
+  work.handleMouse({ type: 'click', button: 'left', x: 4, y: 1, width: 140 });
+  const tools = ui.chatContainer.children.filter(row => row instanceof core.ToolExecutionComponent && row.toolCallId?.startsWith('mixed-'));
+  assert.equal(tools.length, 7, 'all recorded calls survive replay');
+  const rows = tools.map(row => plain(row.render(140).join('\n')));
+  assert.match(rows[0], /4 actions/);
+  assert.ok(rows.slice(1, 4).every(row => !row.trim()), 'mixed group followers do not duplicate cards');
+  assert.match(rows[4], /2 actions/, 'codemode can lead an action group');
+  assert.equal(rows[5].trim(), '');
+  assert.match(rows[6], /codemode.*1 nested error/, 'handled nested error remains a separate warning card');
+  tools[0].setExpanded(true);
+  tools[4].setExpanded(true);
+  const expanded = paint();
+  assert.match(expanded, /codemode/);
+  assert.match(expanded, /Mixed-action preview:/);
+  assert.deepEqual(runtime.session.getActiveToolNames(), [], 'preview cannot execute tools');
+  assert.deepEqual(errors, []);
+  console.log('Mixed action groups replay through native Pi, retain warning cards, and preserve work-strip inspection');
+} finally { ui.ui.stop(); await preview.cleanup(); ui.footerDataProvider.dispose(); }
