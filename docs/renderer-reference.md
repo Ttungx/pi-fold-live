@@ -4,7 +4,7 @@ Detailed display behavior, keyboard controls, integration notes, and development
 
 ## Git installation
 
-As an alternative to npm:
+Pi Fold Live is installed from git; there is no npm release:
 
 ```sh
 pi install git:github.com/Ttungx/pi-fold-live

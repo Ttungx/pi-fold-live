@@ -26,17 +26,6 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
-  "files": [
-    "index.ts",
-    "src/*.ts",
-    "tests/*.mjs",
-    "tests/fixtures/*.ts",
-    "scripts/*.mjs",
-    "docs/*.md",
-    "LICENSE",
-    "README.md",
-    "CHANGELOG.md"
-  ],
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -53,10 +42,6 @@
   },
   "engines": {
     "node": ">=22.19.0"
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^1.4.0",

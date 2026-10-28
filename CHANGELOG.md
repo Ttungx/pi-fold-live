@@ -6,6 +6,7 @@
 - New `/fold follow on|off` (default on). The newest tool call renders as a fixed-height live window: one heading plus the last three output lines, scrolling in place. A finished action keeps its window until the next action starts and then folds into the work group, so nothing inflates and collapses the instant a command completes. A click opens the full pane; Ctrl+O expansion outranks the window.
 - Follow shows thinking as one row whose label streams the newest recorded line. A thinking phase no longer folds and reopens between segments; it folds only when the next action starts.
 - Fix the two upstream checks that only passed on POSIX hosts, so `npm test` runs on Windows too.
+- Distributed as a git package only (`pi install git:github.com/Ttungx/pi-fold-live`); this fork is not published to npm.
 
 Everything below is the upstream changelog, unchanged.
 

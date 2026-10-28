@@ -12,16 +12,17 @@ Everything else — the **Worked for …** strip, `/inspect`, thinking groups, c
 
 ## Install
 
-Tested with **Pi 1.4.0** and **Node.js 22.19.0 or later**.
-
-```sh
-pi install npm:pi-fold-live
-```
-
-Or straight from the repository:
+Tested with **Pi 1.4.0** and **Node.js 22.19.0 or later**. This fork is distributed through git only; it is not published to npm.
 
 ```sh
 pi install git:github.com/Ttungx/pi-fold-live
+```
+
+Pin a release with a tag, and remove it with the same pinned source:
+
+```sh
+pi install git:github.com/Ttungx/pi-fold-live@v1.0.0
+pi remove git:github.com/Ttungx/pi-fold-live@v1.0.0
 ```
 
 Restart Pi, or run `/reload` when the session and its background work are idle.
