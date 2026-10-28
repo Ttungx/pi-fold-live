@@ -3,7 +3,7 @@
 ## pi-fold-live 1.0.0 — fork of @notrico/pi-fold 3.1.0
 
 - Final replies render natively: no `toolPendingBg` fill, no added padding rows, no gutter change. The work strip still projects the reply row and still folds its leading thinking.
-- New `/fold follow on|off` (default on). A tool call that is still running keeps its own card open, the action it replaced folds back to one row, and a finished action folds into the work group. A manual open, a header click, or Pi's Ctrl+O expansion outranks it.
+- New `/fold follow on|off` (default on). The newest tool call renders as a fixed-height live window: one heading plus the last three output lines, scrolling in place. A finished action keeps its window until the next action starts and then folds into the work group, so nothing inflates and collapses the instant a command completes. A click opens the full pane; Ctrl+O expansion outranks the window.
 - Follow shows thinking as one row whose label streams the newest recorded line. A thinking phase no longer folds and reopens between segments; it folds only when the next action starts.
 - Fix the two upstream checks that only passed on POSIX hosts, so `npm test` runs on Windows too.
 

@@ -18,7 +18,7 @@ const getLanguageFromPath = typeof Pi.getLanguageFromPath === "function" ? Pi.ge
 
 type Context = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
 type Status = "pending" | "running" | "success" | "failed" | "cancelled" | "unavailable" | "unanswered" | "answered" | "notice";
-type Node = { id: string; name: string; args: any; epoch: number; status: Status; result?: any; images: number; note?: string; pane?: ToolPane; code?: CodePane; group?: Group; native: NativeToolOwner; invalidate?: () => void; nativeExpanded?: boolean; rendererAttached?: boolean; revision: number; lastPartial?: boolean; lastError?: boolean; followOpen?: boolean; manual?: boolean };
+type Node = { id: string; name: string; args: any; epoch: number; status: Status; result?: any; images: number; note?: string; pane?: ToolPane; code?: CodePane; group?: Group; native: NativeToolOwner; invalidate?: () => void; nativeExpanded?: boolean; rendererAttached?: boolean; revision: number; lastPartial?: boolean; lastError?: boolean; manual?: boolean; replayed?: boolean };
 type Group = { members: Node[]; pane: ToolPane; signature: string };
 const shortName = (name: string) => name.split("__").at(-1) || name;
 export const isNativeSubagent = (name: string) => /^(?:subagents?(?:_|$)|fleet(?:_|$))/i.test(shortName(name));
@@ -250,25 +250,24 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
   const nativeImages = (node: Node) => !images && node.images > 0;
   if (imageAdapterOff) subscriptions.push(imageAdapterOff);
   const follows = () => options.follow?.isEnabled() === true;
-  // Follow target: the newest action still waiting or running, in insertion order.
-  const liveNode = (): Node | undefined => {
-    let latest: Node | undefined;
-    for (const node of nodes.values()) if (node.status === "pending" || node.status === "running") latest = node;
-    return latest;
+  const newestNode = (): Node | undefined => {
+    let last: Node | undefined;
+    for (const node of nodes.values()) last = node;
+    return last;
   };
-  /** Keep the live action open and fold the one it replaced. A manual open or
-   * Pi's own Ctrl+O expansion wins, so inspection never fights the display. */
-  const syncFollow = () => {
-    const active = follows() ? liveNode() : undefined;
-    for (const node of nodes.values()) {
-      if (!node.pane) continue;
-      if (node === active) {
-        if (!node.manual && !node.pane.open) { node.pane.open = true; node.followOpen = true; }
-      } else if (node.followOpen && !node.manual) { node.pane.open = false; node.followOpen = false; }
-    }
+  /** One action is an image, a decision, a failure or a subagent card; those keep
+   * their own upstream surface and never become the live window. */
+  const singleCardNode = (node: Node) => compactSubagent(node.name) || question(node.name) ||
+    !!node.result && (node.result.content?.some((block: any) => block.type === "image") || !["pending", "running", "success"].includes(node.status));
+  /** The live window is the newest action of the turn, running or just finished.
+   * It folds when the next action starts, not the instant it completes, so a
+   * finished command stays readable while the model decides what to do next. */
+  const windowNode = (): Node | undefined => {
+    if (!follows()) return;
+    const node = newestNode();
+    return node && !node.replayed && !node.manual && !node.code && !singleCardNode(node) ? node : undefined;
   };
   const redraw = () => {
-    syncFollow();
     // Snapshot before native synchronous invalidate -> updateDisplay -> renderer registration.
     for (const invalidate of [...new Set([...nodes.values()].map(node => node.invalidate).filter(Boolean))]) invalidate!();
   };
@@ -317,6 +316,9 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
     };
     for (const node of nodes.values()) {
       node.group = undefined;
+      // The live window renders its own preview; it joins the group once a
+      // newer action takes the window.
+      if (node === windowNode()) { finish(); continue; }
       const code = node.code?.content;
       if (compactSubagent(node.name) || node.status !== "success" || node.images || code && (!code.supported || !code.clean)) { finish(); continue; }
       if (run.length && node.epoch !== run[0].epoch) finish();
@@ -328,7 +330,7 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
   };
   const ensure = (id: string, name: string, args?: any, stock?: ToolRenderers) => {
     let node = nodes.get(id);
-    if (!node) { node = { id, name, args, epoch, status: "pending", images: 0, revision: 0, native: new NativeToolOwner(name, stock) }; nodes.set(id, node); }
+    if (!node) { node = { id, name, args, epoch, status: "pending", images: 0, revision: 0, replayed: rebuilding || undefined, native: new NativeToolOwner(name, stock) }; nodes.set(id, node); }
     if (args !== undefined && node.args !== args) { node.args = args; node.revision++; node.pane?.reset(); }
     if (name === "codemode") node.code ||= new CodePane(height);
     return node;
@@ -497,16 +499,37 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
       }
       node.nativeExpanded = expanded;
     };
-    // The live action keeps a pane of its own so its output can be read while it runs.
-    // The render call is authoritative, so no redraw ordering can leave a stale card open.
-    // Compact subagent, question, image and failure cards keep their upstream
-    // one-line decision surface; follow only opens ordinary work output.
-    const followCard = (node: Node) => follows() && node === liveNode() && !node.manual && !singleCard(node);
-    const liveCard = (node: Node, theme?: any) => {
+    // The live window: one heading plus a fixed number of tail rows. The block
+    // never grows with the output, so streaming reads as text moving inside a
+    // stable window instead of a panel inflating and collapsing.
+    const followWindow = (node: Node) => node === windowNode();
+    /** The window is not the pane, so a click on it expands the real pane and
+     * pins it: inspection outranks the live window for that action. */
+    const windowMouse = (node: Node, theme: any, event: TuiMouseEvent) => {
+      if (event.type !== "click" || event.button !== "left" || event.ctrl || event.alt || event.shift) return undefined;
+      node.manual = true;
+      individual(node, theme).open = true;
+      release(true);
+      pi.events.emit("compact-renderer:focus:v1", { owner: "editor" });
+      redraw();
+      return { handled: true };
+    };
+    const previewLines = 3;
+    const tailLines = (node: Node, width: number): string[] => {
+      const text = (node.result?.content ?? [])
+        .filter((block: any) => block.type === "text" && typeof block.text === "string")
+        .map((block: any) => block.text).join("\n").replace(/\r/g, "").slice(-8192);
+      return text.split("\n").map(line => line.trimEnd()).filter(line => line.trim()).slice(-previewLines)
+        .map(line => truncateToWidth(line, Math.max(1, width), "…"));
+    };
+    const windowRows = (node: Node, width: number, theme: any): string[] => {
       const pane = individual(node, theme);
-      if (followCard(node)) { pane.open = true; node.followOpen = true; }
-      else if (node.followOpen) { pane.open = false; node.followOpen = false; }
-      return pane;
+      const heading = truncateToWidth(pane.styleHeader(`▾ ${pane.title}`), cardContentWidth(width), "");
+      const rows = [activityRow(heading, width, theme)];
+      const tail = tailLines(node, cardContentWidth(width) - 3);
+      if (!tail.length) rows.push(activityRow(`   ${theme ? theme.fg("dim", node.status === "pending" ? "preparing" : "waiting for output") : ""}`, width, theme));
+      for (const line of tail) rows.push(activityRow(`   ${theme ? theme.fg("text", line) : line}`, width, theme));
+      return rows;
     };
     const codePane = (node: Node, theme: any, context: Context) => {
       const pane = node.code!;
@@ -556,9 +579,14 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
         return new DynamicComponent(width => {
           if (nativeImages(node)) return node.native.renderCurrent(width);
           if (subagentView(node)?.hidden || node.group) return [];
-          if (singleCard(node) || followCard(node)) return liveCard(node, theme).render(width);
+          if (singleCard(node)) return individual(node, theme).render(width);
+          if (followWindow(node)) return windowRows(node, width, theme);
+          // A manually opened action is drawn by its result row alone.
+          if (node.manual && node.result) return [];
           return [activityRow(truncateToWidth(activityHeading(`${node.result ? "" : "… "}${toolLabel(name, node.args)}${node.result ? "" : ` · ${context.executionStarted ? "running" : "preparing"}`}`, theme), cardContentWidth(width)), width, theme)];
-        }, event => nativeImages(node) ? undefined : mouse(!subagentView(node)?.hidden && !node.group && (singleCard(node) || followCard(node)) ? liveCard(node, theme) : undefined, event, node), node);
+        }, event => nativeImages(node) ? undefined : followWindow(node)
+          ? windowMouse(node, theme, event)
+          : mouse(!subagentView(node)?.hidden && !node.group ? individual(node, theme) : undefined, event, node), node);
       },
       renderResult(result, options, theme, context) {
         if (disposed || !nativeToolContextSupported(context) || stale(context)) return stock?.renderResult?.(result, options, theme, { ...context, executionStarted: false, state: {}, lastComponent: undefined }) ?? nativeTextFallback(result, theme);
@@ -578,8 +606,10 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
           if (subagentView(node)?.hidden) return [];
           if (node.group) return groupPane(node, theme)?.render(width) ?? [];
           if (singleCard(node)) return [];
-          return liveCard(node, theme).render(width);
-        }, event => nativeImages(node) ? undefined : mouse(node.group ? node.group.members[0] === node ? node.group.pane : undefined : !singleCard(node) ? liveCard(node, theme) : undefined, event, node), node);
+          // The call row owns the live window; the result row stays empty for it.
+          if (followWindow(node)) return [];
+          return individual(node, theme).render(width);
+        }, event => nativeImages(node) ? undefined : mouse(node.group ? node.group.members[0] === node ? node.group.pane : undefined : !singleCard(node) ? individual(node, theme) : undefined, event, node), node);
       },
     };
   });

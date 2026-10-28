@@ -4,7 +4,7 @@ Follow the work, read what is running, keep the answer plain.
 
 A fork of [`@notrico/pi-fold`](https://github.com/rrrrrrrrrricoxi/pi-fold) that keeps the upstream transcript folding and changes two things:
 
-- **The action that is running stays open.** While a tool call is executing, its own card is expanded, so the output arrives where you are looking. When the next action starts, the previous one folds back to a single row. Ctrl+O expansion and a manual click still win over this.
+- **The newest action gets a small live window.** While a tool call runs, one heading plus the last three output lines stay on screen; new output scrolls inside that fixed window instead of inflating a panel. A finished action keeps its window and folds into the work group only when the next action starts. Click the window for the full output; Ctrl+O still expands everything.
 - **Thinking is one row that keeps moving.** While the model is reasoning, the thinking row shows the newest recorded line and updates as the text streams. Consecutive segments do not fold and reopen; the row only folds when that thinking phase ends and the next action starts.
 - **Final replies render exactly as Pi renders them.** No filled background, no added padding rows, no gutter change. Questions, decisions, and unresolved errors still stay visible when the work above them folds.
 
