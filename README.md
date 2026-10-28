@@ -58,6 +58,7 @@ Ctrl+Alt+W and `/fold collapse` only touch completed work. The running action ke
 ```sh
 npm install
 npm test
+node scripts/ablation.mjs . A+both   # measure one build; see the script header for arms
 ```
 
 Runtime modules live in `src/`, regression checks in `tests/`, preview and benchmark runners in `scripts/`, and upstream's detailed notes in `docs/`. `index.ts` is the Pi entry point. `npm test` needs a local `node_modules` (the checks load Pi's own TUI and component classes).

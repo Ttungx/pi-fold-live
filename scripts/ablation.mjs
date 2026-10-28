@@ -114,10 +114,11 @@ const thinkingMetrics = (() => {
   };
 })();
 
-// ---------- 3. Tools: three actions, one at a time ----------
+// ---------- 3. Tools: three short actions, then one long action ----------
 const toolMetrics = (() => {
   if (arm === 'A+thinking') return { skipped: 'tool follow disabled' };
   const s = session({ tools: true });
+  const frames = [];
   const make = (id, output) => {
     const args = { command: `run ${id}` };
     const renderer = s.resolver.current('bash', () => createShellRenderers('$'));
@@ -128,31 +129,68 @@ const toolMetrics = (() => {
     component.updateResult({ content: [{ type: 'text', text: output }], details: {}, isError: false }, true);
     return component;
   };
-  const frames = [];
-  // An open pane starts its header with the disclosure glyph; a closed one does not.
-  const record = (label, component) => { const text = plain(component); frames.push({ label, rows: rows(component), open: /▾/.test(text), output: /OUT_\d/.test(text) }); };
-  const pick = (prefix) => frames.filter(frame => frame.label.startsWith(prefix));
+  const snapshot = component => {
+    const text = plain(component);
+    return { rows: rows(component), open: /▾/.test(text), pane: /Details/.test(text), text };
+  };
+  const record = (label, component) => frames.push({ label, ...snapshot(component) });
+  const pick = prefix => frames.filter(frame => frame.label.startsWith(prefix));
+  const finish = (id, component, output) => {
+    component.updateResult({ content: [{ type: 'text', text: output }], details: { exitCode: 0 }, isError: false }, false);
+    s.emit('tool_execution_end', { toolCallId: id, toolName: 'bash', result: { content: [], details: {} }, isError: false });
+  };
   try {
     const one = make('one', 'OUT_1'); record('live-1', one);
     const two = make('two', 'OUT_2'); record('live-2', two); record('prev-2', one);
     const three = make('three', 'OUT_3'); record('live-3', three); record('prev-3', two); record('prev-3a', one);
-    for (const [index, component] of [one, two, three].entries()) {
-      component.updateResult({ content: [{ type: 'text', text: `OUT_${index + 1}` }], details: { exitCode: 0 }, isError: false }, false);
-      s.emit('tool_execution_end', { toolCallId: ['one', 'two', 'three'][index], toolName: 'bash', result: { content: [], details: {} }, isError: false });
-    }
+    for (const [index, component] of [one, two, three].entries()) finish(['one', 'two', 'three'][index], component, `OUT_${index + 1}`);
     record('finished-1', one); record('finished-2', two); record('finished-3', three);
+
+    return {
+      short: {
+        liveRows: pick('live-').map(frame => frame.rows).join(','),
+        liveOpen: pick('live-').filter(frame => frame.open).length,
+        livePane: pick('live-').filter(frame => frame.pane).length,
+        liveOutput: pick('live-').filter(frame => /OUT_\d/.test(frame.text)).length,
+        previousRows: pick('prev-').map(frame => frame.rows).join(','),
+        previousOpen: pick('prev-').filter(frame => frame.open).length,
+        previousOutput: pick('prev-').filter(frame => /OUT_\d/.test(frame.text)).length,
+        finishedRows: pick('finished-').map(frame => frame.rows).join(','),
+      },
+      finishedOpen: pick('finished-').filter(frame => frame.open).length,
+    };
   } finally { s.stop(); s.mode.dispose(); s.follow.dispose(); }
-  return {
-    frames: frames.length,
-    liveRows: pick('live-').map(frame => frame.rows).join(''),
-    liveOpen: pick('live-').filter(frame => frame.open).length,
-    liveOutput: pick('live-').filter(frame => frame.output).length,
-    previousRows: pick('prev-').map(frame => frame.rows).join(''),
-    previousOpen: pick('prev-').filter(frame => frame.open).length,
-    previousOutput: pick('prev-').filter(frame => frame.output).length,
-    finishedRows: pick('finished-').map(frame => frame.rows).join(''),
-    finishedOpen: pick('finished-').filter(frame => frame.open).length,
-  };
+})();
+
+// ---------- 3b. One long action on its own: the block it presents while running ----------
+const longMetrics = (() => {
+  if (arm === 'A+thinking') return { skipped: 'tool follow disabled' };
+  const s = session({ tools: true });
+  const long = Array.from({ length: 40 }, (_, n) => `output-${n}`).join(String.fromCharCode(10)) + String.fromCharCode(10) + 'FORTY_LAST';
+  const args = { command: 'run the suite' };
+  const renderer = s.resolver.current('bash', () => createShellRenderers('$'));
+  const component = new ToolExecutionComponent('bash', 'big', args, { showImages: false, outputPad: 0 }, renderer, { requestRender() {} }, '/tmp');
+  try {
+    component.setArgsComplete();
+    s.emit('tool_execution_start', { toolCallId: 'big', toolName: 'bash', args });
+    component.markExecutionStarted();
+    component.updateResult({ content: [{ type: 'text', text: long }], details: {}, isError: false }, true);
+    const running = plain(component);
+    const rowsRunning = rows(component);
+    component.updateResult({ content: [{ type: 'text', text: long }], details: { exitCode: 0 }, isError: false }, false);
+    s.emit('tool_execution_end', { toolCallId: 'big', toolName: 'bash', result: { content: [], details: {} }, isError: false });
+    const rowsDone = rows(component);
+    return {
+      rowsRunning,
+      rowsDone,
+      // The flash the user sees: rows that disappear the instant the command ends.
+      shrinkOnComplete: rowsRunning - rowsDone,
+      open: /▾/.test(running),
+      pane: /Details/.test(running),
+      newestLine: /FORTY_LAST/.test(running),
+      firstLine: /output-0[^\d]/.test(running),
+    };
+  } finally { s.stop(); s.mode.dispose(); s.follow.dispose(); }
 })();
 
 // ---------- 4. Render cost of each change ----------
@@ -174,4 +212,4 @@ const cost = (() => {
   return { finalReplyMs: reply, nativeReplyMs: native, overheadMs: Number((reply - native).toFixed(3)) };
 })();
 
-console.log(JSON.stringify({ arm, root, reply, thinking: thinkingMetrics, tools: toolMetrics, cost }));
+console.log(JSON.stringify({ arm, root, reply, thinking: thinkingMetrics, tools: toolMetrics, long: longMetrics, cost }));
