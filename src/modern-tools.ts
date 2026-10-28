@@ -499,7 +499,9 @@ export function registerModernTools(pi: ExtensionAPI, mode: DisplayMode, options
     };
     // The live action keeps a pane of its own so its output can be read while it runs.
     // The render call is authoritative, so no redraw ordering can leave a stale card open.
-    const followCard = (node: Node) => follows() && node === liveNode() && !node.manual;
+    // Compact subagent, question, image and failure cards keep their upstream
+    // one-line decision surface; follow only opens ordinary work output.
+    const followCard = (node: Node) => follows() && node === liveNode() && !node.manual && !singleCard(node);
     const liveCard = (node: Node, theme?: any) => {
       const pane = individual(node, theme);
       if (followCard(node)) { pane.open = true; node.followOpen = true; }
