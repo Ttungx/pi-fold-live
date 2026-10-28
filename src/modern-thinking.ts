@@ -1,6 +1,6 @@
 import type { DisplayMode } from './display-mode.ts';
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { hiddenThinkingShape, mixedThinkingRegion, installModernThinkingAdapter } from "./modern-thinking-adapter.ts";
 import { recordedPaneHeight } from "./modern-recorded-pane.ts";
 import { ToolPane, type PaneAction } from "./modern-tool-pane.ts";
@@ -26,8 +26,11 @@ export function flowingThinkingLabel(sources: readonly string[]): string {
   const line = tail.split(/\r?\n/).map(value => value.trim()).filter(Boolean).at(-1) || "Recorded thinking";
   const text = line.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_match, bold, underlined) => bold || underlined)
     .replace(/`([^`]+)`/g, "$1").replace(/[\p{Cc}\p{Cf}]/gu, " ").replace(/\s+/g, " ").trim() || "Recorded thinking";
-  const tailOnly = Array.from(text).length > 79 ? `\u2026${Array.from(text).slice(-78).join("")}` : text;
-  return truncateToWidth(tailOnly, 80, "\u2026");
+  // Keep the newest columns, so the row reads as progress instead of a chop.
+  const chars = Array.from(text);
+  let width = visibleWidth(text), from = 0;
+  while (from < chars.length && width > 76) { width -= visibleWidth(chars[from]); from++; }
+  return truncateToWidth(from ? `\u2026${chars.slice(from).join("")}` : text, 80, "\u2026");
 }
 
 const hasThinking = (message: any) => (message?.content || []).some((b: any) => b.type === "thinking" && typeof b.thinking === "string" && b.thinking.trim());

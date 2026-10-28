@@ -112,8 +112,16 @@ try {
     assert.match(paint(firstCard), /Thinking · Considering the failure path/, 'the row follows the newest recorded line');
     assert.equal(firstCard.render(120).length, 2, 'growth does not open the pane');
 
+    // A long or wide line keeps its newest columns and stays on one row.
+    const wide = round('call-1', '思考'.repeat(80) + 'TAIL_CONCLUSION');
+    emitThinking('message_update', { message: wide });
+    firstCard.updateContent(wide, true);
+    thinkingCtx.ui.setHiddenThinkingLabel();
+    assert.match(paint(firstCard), /TAIL_CONCLUSION/, 'the row keeps the newest recorded columns');
+    assert.equal(firstCard.render(120).length, 2, 'a long line does not open the pane');
+
     // Segment 2 of the same phase: no fold, no reopen.
-    emitThinking('message_end', { message: grown });
+    emitThinking('message_end', { message: wide });
     const second = round('call-2', 'Second segment reasoning');
     const secondCard = new core.AssistantMessageComponent(second, true);
     cards.push(secondCard);
