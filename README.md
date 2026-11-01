@@ -56,7 +56,24 @@ Ctrl+Alt+W and `/fold collapse` only touch completed work. The running action ke
 
 ## OMP
 
-[`omp`](https://github.com/can1357/oh-my-pi) can load this checkout as an extension. Point `extensions:` at the directory; OMP resolves it through `package.json#omp.extensions`, and its Pi compatibility layer resolves the `@earendil-works/*` imports:
+[`omp`](https://github.com/can1357/oh-my-pi) 18.x loads this checkout through `package.json#omp.extensions`, and its Pi compatibility layer resolves the `@earendil-works/*` imports. Choose one install path.
+
+Link the clone once; the plugin stays enabled across sessions. Re-link after moving the checkout:
+
+```sh
+omp plugin link /path/to/pi-fold-live
+omp plugin uninstall pi-fold-live   # remove
+```
+
+Load it for one session without installing:
+
+```sh
+omp --extension /path/to/pi-fold-live
+```
+
+`--extension` accepts the package directory (OMP reads its manifest) or `index.ts` directly.
+
+Configure it in a file instead — the user config applies to every session, a project `.omp/config.yml` only to sessions started in that checkout:
 
 ```yaml
 # ~/.omp/agent/config.yml
