@@ -58,11 +58,17 @@ Ctrl+Alt+W and `/fold collapse` only touch completed work. The running action ke
 
 [`omp`](https://github.com/can1357/oh-my-pi) 18.x loads this checkout through `package.json#omp.extensions`, and its Pi compatibility layer resolves the `@earendil-works/*` imports. Choose one install path.
 
-Link the clone once; the plugin stays enabled across sessions. Re-link after moving the checkout:
+Install from git; the plugin stays enabled across sessions:
+
+```sh
+omp plugin install github:Ttungx/pi-fold-live
+omp plugin uninstall pi-fold-live   # remove
+```
+
+Link a local clone instead (development). Re-link after moving the checkout:
 
 ```sh
 omp plugin link /path/to/pi-fold-live
-omp plugin uninstall pi-fold-live   # remove
 ```
 
 Load it for one session without installing:
