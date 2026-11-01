@@ -49,7 +49,9 @@ export function inspectRuntime(api: any, agent: any = core, terminal: any = tui)
     },
     describe() {
       const disabled = (Object.keys(requirements) as FoldFeature[]).filter(feature => !available(feature));
-      return `Compatibility: ${this.state} (Pi ${this.version})` + disabled.map(feature => `\n${labels[feature]} unavailable: ${failures.get(feature)?.join(', ') || `${labels[dependencies[feature]!]} unavailable`}`).join('');
+      // OMP releases are 18.x; Pi is still 1.x. This is a label, never a feature gate.
+      const host = Number.parseInt(this.version, 10) >= 2 ? 'OMP' : 'Pi';
+      return `Compatibility: ${this.state} (${host} ${this.version})` + disabled.map(feature => `\n${labels[feature]} unavailable: ${failures.get(feature)?.join(', ') || `${labels[dependencies[feature]!]} unavailable`}`).join('');
     },
   };
 }
