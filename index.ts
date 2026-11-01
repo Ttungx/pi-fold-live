@@ -3,6 +3,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createDisplayMode } from './src/display-mode.ts';
 import { registerFoldCommand } from './src/fold-command.ts';
 import type { WorkStripControls } from './src/work-strip.ts';
+import { registerOmpToolRows } from './src/omp-tool-rows.ts';
 
 export default async function piFold(pi: ExtensionAPI): Promise<void> {
   const compatibility = inspectRuntime(pi);
@@ -47,6 +48,9 @@ export default async function piFold(pi: ExtensionAPI): Promise<void> {
       const off = pi.on(event, () => { if (!disposed) clearDisplayLineCache(); });
       if (typeof off === 'function') disposers.push(off);
     }
+    // OMP has no registerToolRenderer; its exported tool registry is the render-only hook for built-ins.
+    const ompTools = await registerOmpToolRows(pi, mode);
+    if (ompTools) disposers.push(ompTools);
     if (compatibility.available('tools')) disposers.push((await import('./src/modern-tools.ts')).registerModernTools(pi, featureMode('tools'), { images: compatibility.available('images'), subagents: compatibility.available('subagents'), follow }));
     if (compatibility.available('thinking')) disposers.push((await import('./src/modern-thinking.ts')).registerModernThinking(pi, featureMode('thinking'), follow));
     if (compatibility.available('prompts')) disposers.push((await import('./src/modern-prompts.ts')).registerModernPrompts(pi, featureMode('prompts')));

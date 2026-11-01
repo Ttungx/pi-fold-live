@@ -54,12 +54,27 @@ Ctrl+Alt+W and `/fold collapse` only touch completed work. The running action ke
 - Compact thinking groups need Pi's `hideThinkingBlock: true` setting.
 - Upstream's Windows-only test failures were fixed, and the test suite now runs on Windows as well as macOS/Linux.
 
+## OMP
+
+[`omp`](https://github.com/can1357/oh-my-pi) can load this checkout as an extension. Point `extensions:` at the directory; OMP resolves it through `package.json#omp.extensions`, and its Pi compatibility layer resolves the `@earendil-works/*` imports:
+
+```yaml
+# ~/.omp/agent/config.yml
+extensions:
+  - /path/to/pi-fold-live
+```
+
+On OMP, Pi Fold renders the plain-text built-ins (`read`, `bash`, `grep`, `glob`, `find`, `lsp`, `eval`, `web_search`) the way this fork does on Pi: one action row, and a fixed four-row live window showing the newest three output lines while the call runs. A settled action is one row with `✓` or `✗`. Ctrl+O and `/fold off` return OMP's native cards.
+
+It uses OMP's exported name-keyed `toolRenderers` registry (`@oh-my-pi/pi-tui/tools`) — the only render-only hook OMP 18 exposes for built-ins. The rest stays OMP-native: `ask`, `task`, `todo`, `wait`, `edit`, `write`, and the other rich cards keep their own renderers, and OMP's native `Thought for 12s` / `Worked for 12s` folding is unchanged. `/fold status` lists the Pi-only interfaces OMP removed.
+
 ## Development
 
 ```sh
 npm install
 npm test
 node scripts/ablation.mjs . A+both   # measure one build; see the script header for arms
+node scripts/omp-rows-ablation.mjs   # full scan vs capped vs shipped OMP row renderer
 ```
 
 Runtime modules live in `src/`, regression checks in `tests/`, preview and benchmark runners in `scripts/`, and upstream's detailed notes in `docs/`. `index.ts` is the Pi entry point. `npm test` needs a local `node_modules` (the checks load Pi's own TUI and component classes).

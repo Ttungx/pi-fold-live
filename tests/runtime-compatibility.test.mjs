@@ -30,7 +30,7 @@ assert.equal(inspectRuntime(pi, {}, {}).state, 'unavailable');
 const fixture = mkdtempSync(path.join(tmpdir(), 'fold-missing-exports-'));
 try {
   mkdirSync(path.join(fixture, 'src'));
-  for (const file of ['index.ts', 'src/runtime-compatibility.ts', 'src/display-mode.ts', 'src/fold-command.ts']) copyFileSync(new URL('../' + file, import.meta.url), path.join(fixture, file));
+  for (const file of ['index.ts', 'src/runtime-compatibility.ts', 'src/display-mode.ts', 'src/fold-command.ts', 'src/omp-tool-rows.ts', 'src/display-card.ts', 'src/display-line-cache.ts']) copyFileSync(new URL('../' + file, import.meta.url), path.join(fixture, file));
   writeFileSync(path.join(fixture, 'package.json'), '{"type":"module"}');
   for (const name of ['pi-coding-agent', 'pi-tui']) {
     const folder = path.join(fixture, 'node_modules/@earendil-works', name); mkdirSync(folder, { recursive: true });
@@ -44,7 +44,9 @@ await commands.get('fold').handler('on',{hasUI:false,ui:{notify(message){notices
 if (!notices[0]?.includes('Compatibility: unavailable') || notices[0].includes('Pi Fold on')) throw new Error(notices.join('\\n'));
 hooks.get('session_shutdown')();
 console.log('missing exports: native fallback');`);
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', path.join(fixture, 'check.mjs')], { encoding: 'utf8' });
+  // transform-types keeps the native ESM loader (so absent named exports stay absent) while
+  // allowing the TypeScript syntax the real feature modules use.
+  const result = spawnSync(process.execPath, ['--experimental-transform-types', path.join(fixture, 'check.mjs')], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
 } finally { rmSync(fixture, { recursive: true, force: true }); }
 console.log(`Pi ${core.VERSION}: capability probes, partial support and missing-export native startup passed`);

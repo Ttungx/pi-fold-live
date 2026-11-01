@@ -15,3 +15,11 @@ Missing image adapters leave image-bearing tools native. Missing subagent messag
 These checks reduce version coupling; they cannot prove that an unchanged method name still behaves the same. CI exercises real Pi behavior, but terminal appearance still needs visual review after UI changes. If Pi changes a private rendering contract, that adapter may still need an update. Public extension APIs are preferred; current thinking, work-strip, and overlay features still need guarded native interfaces.
 
 Configuration validators can request the current report through `pi-fold:compatibility:v1` with `{ reply(report) {} }`. Fold replies synchronously with `{ version: 1, state, description }`. The report describes detected capability, not a promise about untested releases.
+
+## OMP
+
+OMP 18.x loads the extension and gets a reduced renderer. Verified against OMP 18.14.2 with an `extensions:` entry pointing at this directory: the directory resolves through `package.json#omp.extensions`, and `/fold` and `/inspect` appear in the RPC command catalog. `src/omp-tool-rows.ts` then replaces the name-keyed entries in OMP's exported `toolRenderers` registry for the plain-text built-ins, giving each call one activity row and a fixed-height live window with the newest three lines; Ctrl+O and `/fold off` delegate to the stock renderer.
+
+Everything else remains OMP-native. The capability probe disables thinking, prompt folding, skills, workflows, subagent groups, work sections, inspection scrolling, and overlay protection because OMP replaced the interfaces they patch; `ask`, `task`, `todo`, `wait`, `edit`, and `write` keep their own renderers. `/fold status` reports the missing interfaces.
+
+To reproduce: write an overlay config with `extensions: [<checkout>]`, then run `omp --mode rpc --no-ui --no-session --config <overlay>` and read the `available_commands_update` frame.

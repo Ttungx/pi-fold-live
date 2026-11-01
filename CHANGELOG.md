@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+- OMP 18 support: the package declares `omp.extensions`, and plain-text built-ins (`read`, `bash`, `grep`, `glob`, `find`, `lsp`, `eval`, `web_search`) render as one action row plus a fixed live window through OMP's exported `toolRenderers` registry. Ctrl+O and `/fold off` keep OMP's native cards; OMP-native thinking and work folding are untouched.
+- OMP row renderer: scan only the result's tail 8 KiB and memoize per result object, so a 2 MB result repaints in ~0.005 ms instead of ~3.3 ms (ablation: `scripts/omp-rows-ablation.mjs`). Tail lines are tab-expanded and stripped of terminal control sequences; targets get the same treatment.
+
 ## pi-fold-live 1.0.0 — fork of @notrico/pi-fold 3.1.0
 
 - Final replies render natively: no `toolPendingBg` fill, no added padding rows, no gutter change. The work strip still projects the reply row and still folds its leading thinking.
