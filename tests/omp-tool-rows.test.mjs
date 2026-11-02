@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { loadSource, stripAnsi, tui } from './test-runtime.mjs';
 
-const { compactToolRows, compactToolTarget, ompCompactToolNames, wrapOmpToolRenderer, registerOmpToolRows, toolRunFor, toolRunSummary } = await loadSource('omp-tool-rows.ts');
+const { compactToolRows, compactToolTarget, ompCompactToolNames, wrapOmpToolRenderer, registerOmpToolRows, toolRunFor, toolRunSummary, withActionLink, actionLinkUrl, installActionLinks } = await loadSource('omp-tool-rows.ts');
 const theme = { fg: (_token, text) => text, bold: text => text };
 const plain = rows => rows.map(stripAnsi);
 const lines = count => Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n');
@@ -57,6 +57,29 @@ for (const [count, expected] of [[0, []], [1, ['line 1']], [10, ['line 8', 'line
 }
 
 assert.ok(ompCompactToolNames.includes('edit') && ompCompactToolNames.includes('write') && ompCompactToolNames.includes('apply_patch'), 'diffs fold too');
+
+// OMP strips the action-link marker before writing but reads it back for clicks.
+{
+  const linked = withActionLink(' ✓ bash · echo hi');
+  assert.ok(linked.startsWith(`\x1b]8;id=omp-extension-link;${actionLinkUrl}\x07`));
+  assert.ok(linked.endsWith('\x1b]8;;\x07'));
+  assert.equal(withActionLink(''), '');
+}
+
+// A row click toggles OMP's tool-detail expansion through the registered scheme.
+{
+  const seen = [];
+  let activate;
+  const dispose = installActionLinks({
+    registerLinkScheme: scheme => seen.push(['scheme', scheme]),
+    on: (event, handler) => { seen.push(['on', event]); activate = handler; return () => {}; },
+  });
+  activate({ url: actionLinkUrl }, { ui: { getToolsExpanded: () => false, setToolsExpanded: value => seen.push(['expanded', value]) } });
+  activate({ url: actionLinkUrl }, { ui: { getToolsExpanded: () => true, setToolsExpanded: value => seen.push(['expanded', value]) } });
+  activate({ url: 'other:action' }, { ui: { getToolsExpanded: () => false, setToolsExpanded: () => seen.push(['unexpected']) } });
+  assert.deepEqual(seen, [['scheme', 'pi-fold'], ['on', 'link_activate'], ['expanded', true], ['expanded', false]]);
+  dispose();
+}
 
 // Consecutive settled rows of the same tool collapse into one action block; a different tool,
 // turn segment, expanded row, or running row breaks the run.

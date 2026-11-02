@@ -7,7 +7,11 @@ const previewLines = 3;
 export const ompCompactToolNames = ['read', 'bash', 'grep', 'glob', 'find', 'lsp', 'eval', 'web_search', 'edit', 'write', 'apply_patch'] as const;
 
 type RenderMode = { isEnabled(): boolean };
-type HostApi = { registerToolRenderer?: unknown; on?: (event: string, handler: (event: unknown) => void) => unknown };
+type HostApi = {
+  registerToolRenderer?: unknown;
+  registerLinkScheme?: (scheme: string) => void;
+  on?: (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => unknown;
+};
 type RowTheme = { fg?(token: string, text: string): string };
 type ToolArgs = Record<string, unknown> | null | undefined;
 type TextBlock = { type: 'text'; text: string };
@@ -61,6 +65,12 @@ const hasImage = (result: ToolResult | undefined): boolean =>
   (result?.content ?? []).some(block => typeof block === 'object' && block !== null && 'type' in block && block.type === 'image');
 
 const tint = (theme: RowTheme | undefined, token: string, text: string) => theme?.fg?.(token, text) ?? text;
+
+/** The extension-link marker OMP strips before writing but reads back for clicks and hint tags. */
+export const actionLinkUrl = 'pi-fold:action';
+const actionLinkOpen = `\x1b]8;id=omp-extension-link;${actionLinkUrl}\x07`;
+const actionLinkClose = '\x1b]8;;\x07';
+export const withActionLink = (row: string): string => row.length > 0 ? `${actionLinkOpen}${row}${actionLinkClose}` : row;
 const targetKeys = ['command', 'path', 'file_path', 'pattern', 'query', 'url', 'prompt'] as const;
 /** The one argument a reader recognizes the action by, in the order the built-ins name it. */
 export function compactToolTarget(args: ToolArgs): string {
@@ -199,14 +209,29 @@ async function installToolRunFolding(pi: HostApi, mode: RenderMode): Promise<(()
     const tracked = track(this);
     // The card's Box starts with a blank padding row; the activity row is the first visible one.
     const first = rows.map(row => Tui.stripTerminalSequences?.(row) ?? row).find(row => row.trim().length > 0) ?? '';
-    const match = /^\s*✓\s+([a-z_]+)\b/.exec(first);
-    tracked.name = match?.[1] ?? '';
-    if (!mode.isEnabled() || !tracked.name || !tracked.settled || tracked.expanded) return rows;
+    const match = /^\s*[✓✗▾…]\s+([a-z_]+)\b/.exec(first);
+    // Keep the name across expansion: the native card no longer starts with the compact row.
+    if (match) tracked.name = match[1];
+    else if (!tracked.expanded) tracked.name = '';
+    // A click on a compact row toggles tool details through the registered action-link scheme.
+    // An expanded card links only its first plain row so a second click can fold it again.
+    const clickable = (shown: readonly string[]) => {
+      if (!tracked.name) return shown;
+      if (!tracked.expanded) return shown.map(withActionLink);
+      let linked = false;
+      return shown.map(row => {
+        if (linked || row.trim().length === 0 || row.includes('\x1b]8;')) return row;
+        linked = true;
+        return withActionLink(row);
+      });
+    };
+    if (!mode.isEnabled() || !tracked.name || !tracked.settled || tracked.expanded) return clickable(rows);
+    if (!first.trimStart().startsWith('✓')) return clickable(rows);
     const run = toolRunFor([...live], tracked);
-    if (run.length < 2) return rows;
+    if (run.length < 2) return clickable(rows);
     if (run[0] !== tracked) return [];
     const theme = themeModule?.theme;
-    return [activityRow(activityHeading(toolRunSummary(run), theme), width, theme)];
+    return clickable([activityRow(activityHeading(toolRunSummary(run), theme), width, theme)]);
   };
   prototype.dispose = function (this: object) {
     const tracked = tracks.get(this);
@@ -259,6 +284,19 @@ export async function registerOmpToolRows(pi: HostApi, mode: RenderMode): Promis
   };
 }
 
+/** Clicking a compact row raises `link_activate`; OMP's supported expansion toggle is global (Ctrl+O). */
+export function installActionLinks(pi: HostApi): (() => void) | undefined {
+  if (typeof pi.registerLinkScheme !== 'function' || typeof pi.on !== 'function') return undefined;
+  pi.registerLinkScheme('pi-fold');
+  const off = pi.on('link_activate', (event, ctx) => {
+    if (asRecord(event)?.url !== actionLinkUrl) return;
+    const ui = asRecord(asRecord(ctx)?.ui);
+    if (typeof ui?.getToolsExpanded !== 'function' || typeof ui.setToolsExpanded !== 'function') return;
+    ui.setToolsExpanded.call(ui, !ui.getToolsExpanded.call(ui));
+  });
+  return typeof off === 'function' ? off as () => void : undefined;
+}
+
 async function installOmpToolRows(pi: HostApi, mode: RenderMode): Promise<(() => void) | undefined> {
   // Static import cannot work: this subpath exists only on OMP, and must not break Pi loads.
   let registry: Record<string, ToolRendererLike> | undefined;
@@ -275,8 +313,10 @@ async function installOmpToolRows(pi: HostApi, mode: RenderMode): Promise<(() =>
     originals.set(name, stock);
     registry[name] = wrapOmpToolRenderer(name, stock, mode);
   }
+  const restoreLinks = installActionLinks(pi);
   const restoreFolding = await installToolRunFolding(pi, mode);
   return () => {
+    restoreLinks?.();
     restoreFolding?.();
     for (const [name, stock] of originals) registry![name] = stock;
   };
