@@ -87,9 +87,9 @@ extensions:
   - /path/to/pi-fold-live
 ```
 
-On OMP, Pi Fold renders the plain-text built-ins (`read`, `bash`, `grep`, `glob`, `find`, `lsp`, `eval`, `web_search`) the way this fork does on Pi: one action row, and a fixed four-row live window showing the newest three output lines while the call runs. A settled action is one row with `✓` or `✗`. Ctrl+O and `/fold off` return OMP's native cards.
+On OMP, Pi Fold renders the plain-text and diff built-ins (`read`, `bash`, `grep`, `glob`, `find`, `lsp`, `eval`, `web_search`, `edit`, `write`, `apply_patch`) the way this fork does on Pi: one action row, and a fixed four-row live window showing the newest three output lines while the call runs. A settled action is one row with `✓` or `✗`; consecutive settled actions of the same tool fold into one `✓ N actions · <tool>` block. Ctrl+O and `/fold off` return OMP's native cards (including full diffs).
 
-It uses OMP's exported name-keyed `toolRenderers` registry (`@oh-my-pi/pi-tui/tools`) — the only render-only hook OMP 18 exposes for built-ins. The rest stays OMP-native: `ask`, `task`, `todo`, `wait`, `edit`, `write`, and the other rich cards keep their own renderers, and OMP's native `Thought for 12s` / `Worked for 12s` folding is unchanged. `/fold status` lists the Pi-only interfaces OMP removed.
+It uses OMP's exported name-keyed `toolRenderers` registry (`@oh-my-pi/pi-tui/tools`) — the only render-only hook OMP 18 exposes for built-ins — plus the component render pass for same-tool run folding. The rest stays OMP-native: `ask`, `task`, `todo`, `wait`, and the other interactive cards keep their own renderers, and OMP's native `Thought for 12s` / `Worked for 12s` folding is unchanged. `/fold status` lists the Pi-only interfaces OMP removed.
 
 OMP hides the streaming reasoning body when `hideThinkingBlock: true` in its own config; only a live pulse remains. Set it to `false` to stream the CoT, which folds back to `Thought for 12s` when the thought ends. Pi Fold's compact one-line thinking row is a Pi renderer and is not available through OMP's extension API. OMP also does not route mouse clicks to transcript tool blocks; Ctrl+O expands tool output.
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { loadSource, stripAnsi, tui } from './test-runtime.mjs';
 
-const { compactToolRows, compactToolTarget, wrapOmpToolRenderer, registerOmpToolRows } = await loadSource('omp-tool-rows.ts');
+const { compactToolRows, compactToolTarget, ompCompactToolNames, wrapOmpToolRenderer, registerOmpToolRows, toolRunFor, toolRunSummary } = await loadSource('omp-tool-rows.ts');
 const theme = { fg: (_token, text) => text, bold: text => text };
 const plain = rows => rows.map(stripAnsi);
 const lines = count => Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n');
@@ -54,6 +54,21 @@ for (const [count, expected] of [[0, []], [1, ['line 1']], [10, ['line 8', 'line
   assert.deepEqual(blocks.slice(1).map(row => row.trim()).filter(Boolean), ['c', 'd', 'e'], 'blocks keep their order');
   const large = plain(compactToolRows('bash', { command: 'seq' }, { content: [{ type: 'text', text: `${lines(50000)}\nlast` }] }, true, theme, 40));
   assert.deepEqual(large.slice(1).map(row => row.trim()).filter(Boolean), ['line 49999', 'line 50000', 'last']);
+}
+
+assert.ok(ompCompactToolNames.includes('edit') && ompCompactToolNames.includes('write') && ompCompactToolNames.includes('apply_patch'), 'diffs fold too');
+
+// Consecutive settled rows of the same tool collapse into one action block; a different tool,
+// turn segment, expanded row, or running row breaks the run.
+{
+  const row = (name = 'bash', segment = 0, settled = true, expanded = false) => ({ name, segment, settled, expanded });
+  const run = [row(), row(), row()];
+  assert.equal(toolRunFor(run, run[1]).length, 3);
+  assert.equal(toolRunSummary(toolRunFor(run, run[2])), '✓ 3 actions · bash');
+  assert.equal(toolRunFor([row(), row('read')], [row(), row('read')][1]).length, 1, 'different tools stay apart');
+  assert.equal(toolRunFor([row(), row('bash', 1)], [row(), row('bash', 1)][1]).length, 1, 'prose splits runs');
+  assert.equal(toolRunFor([row(), row('bash', 0, true, true)], [row(), row('bash', 0, true, true)][0]).length, 1, 'expanded rows stay whole');
+  assert.equal(toolRunFor([row(), row('bash', 0, false)], [row(), row('bash', 0, false)][1]).length, 1, 'running rows stay alone');
 }
 
 // Expanded, folding off, and image results keep the native card.
