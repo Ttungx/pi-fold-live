@@ -51,6 +51,9 @@ export default async function piFold(pi: ExtensionAPI): Promise<void> {
     // OMP has no registerToolRenderer; its exported tool registry is the render-only hook for built-ins.
     const ompTools = await registerOmpToolRows(pi, mode);
     if (ompTools) disposers.push(ompTools);
+    if (ompTools) compatibility.recordAdapter('Tool rows');
+    const ompThinking = await (await import('./src/omp-thinking.ts')).registerOmpThinking(pi, mode);
+    if (ompThinking) { disposers.push(ompThinking); compatibility.recordAdapter('Thinking rows'); }
     if (compatibility.available('tools')) disposers.push((await import('./src/modern-tools.ts')).registerModernTools(pi, featureMode('tools'), { images: compatibility.available('images'), subagents: compatibility.available('subagents'), follow }));
     if (compatibility.available('thinking')) disposers.push((await import('./src/modern-thinking.ts')).registerModernThinking(pi, featureMode('thinking'), follow));
     if (compatibility.available('prompts')) disposers.push((await import('./src/modern-prompts.ts')).registerModernPrompts(pi, featureMode('prompts')));
@@ -60,12 +63,13 @@ export default async function piFold(pi: ExtensionAPI): Promise<void> {
     if (compatibility.available('subagents')) disposers.push((await import('./src/modern-subagent-messages.ts')).registerModernSubagentMessages(pi, featureMode('subagents')));
     const work: WorkStripControls = compatibility.available('work')
       ? (await import('./src/work-strip.ts')).registerWorkStrip(pi, featureMode('work'), undefined, reason => compatibility.disable('work', reason))
-      : { dispose() {}, setExpanded: () => false, isShortcutEnabled: () => false, setShortcutEnabled() {} };
+      : { dispose() {}, setExpanded: () => false };
     disposers.push(work.dispose);
     disposers.push(registerFoldCommand(pi, mode, work, compatibility, follow));
     if (compatibility.available('inspection')) disposers.push((await import('./src/inspection.ts')).registerInspection(pi, mode, compatibility));
     const off = pi.on('session_start', (_event, ctx) => {
-      if (ctx.hasUI && compatibility.state !== 'full') ctx.ui.notify?.(compatibility.describe(), 'warning');
+      // OMP intentionally lacks Pi-only seams; its startup report would always be partial. `/fold status` still lists them.
+      if (ctx.hasUI && compatibility.host === 'Pi' && compatibility.state !== 'full') ctx.ui.notify?.(compatibility.describe(), 'warning');
     });
     if (typeof off === 'function') disposers.push(off);
   } catch (error) {

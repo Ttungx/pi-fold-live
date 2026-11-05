@@ -1,12 +1,13 @@
 import * as Tui from '@earendil-works/pi-tui';
 import { activityHeading, activityRow, cardContentWidth } from './display-card.ts';
+import { ompToolRowsSupported } from './runtime-compatibility.ts';
 
 /** One heading plus the newest output lines; the running action never grows past this. */
 const previewLines = 3;
 /** Built-ins with plain-text or diff output. Interactive and checklist cards keep their native renderers. */
 export const ompCompactToolNames = ['read', 'bash', 'grep', 'glob', 'find', 'lsp', 'eval', 'web_search', 'edit', 'write', 'apply_patch'] as const;
 
-type RenderMode = { isEnabled(): boolean };
+type RenderMode = { isEnabled(): boolean; onChange?(callback: () => void): () => void };
 type HostApi = {
   registerToolRenderer?: unknown;
   registerLinkScheme?: (scheme: string) => void;
@@ -67,10 +68,10 @@ const hasImage = (result: ToolResult | undefined): boolean =>
 const tint = (theme: RowTheme | undefined, token: string, text: string) => theme?.fg?.(token, text) ?? text;
 
 /** The extension-link marker OMP strips before writing but reads back for clicks and hint tags. */
-export const actionLinkUrl = 'pi-fold:action';
-const actionLinkOpen = `\x1b]8;id=omp-extension-link;${actionLinkUrl}\x07`;
+const actionLinkPrefix = 'pi-fold:action/';
+let nextActionId = 0;
 const actionLinkClose = '\x1b]8;;\x07';
-export const withActionLink = (row: string): string => row.length > 0 ? `${actionLinkOpen}${row}${actionLinkClose}` : row;
+const withActionLink = (row: string, url: string): string => row.trim().length > 0 ? `\x1b]8;id=omp-extension-link;${url}\x07${row}${actionLinkClose}` : row;
 const targetKeys = ['command', 'path', 'file_path', 'pattern', 'query', 'url', 'prompt'] as const;
 /** The one argument a reader recognizes the action by, in the order the built-ins name it. */
 export function compactToolTarget(args: ToolArgs): string {
@@ -118,24 +119,26 @@ export function wrapOmpToolRenderer(name: string, stock: ToolRendererLike, mode:
   return {
     ...stock,
     renderCall(args, options, theme) {
-      if (options?.expanded || !mode.isEnabled()) return stock.renderCall?.(args, options, theme);
-      return { render: width => compactToolRows(name, args, undefined, true, theme, width) };
+      if (options?.expanded || typeof stock.renderCall !== 'function') return stock.renderCall?.(args, options, theme);
+      let native: ToolComponent | undefined;
+      return { render: width => mode.isEnabled() ? compactToolRows(name, args, undefined, true, theme, width) : (native ??= stock.renderCall?.(args, options, theme))?.render(width) ?? [] };
     },
     renderResult(result, options, theme, args) {
-      if (options?.expanded || !mode.isEnabled() || hasImage(result)) {
+      if (options?.expanded || hasImage(result) || typeof stock.renderResult !== 'function') {
         return stock.renderResult?.(result, options, theme, args);
       }
-      return { render: width => compactToolRows(name, args, result, options?.isPartial === true, theme, width) };
+      let native: ToolComponent | undefined;
+      return { render: width => mode.isEnabled() ? compactToolRows(name, args, result, options?.isPartial === true, theme, width) : (native ??= stock.renderResult?.(result, options, theme, args))?.render(width) ?? [] };
     },
   };
 }
 
-type RunItem = { name: string; segment: number; settled: boolean; expanded: boolean };
+type RunItem = { name: string; segment: number; settled: boolean; expanded: boolean; successful?: boolean };
 /** Consecutive settled rows of the same tool in one turn segment collapse into one action block. */
 export function toolRunFor<T extends RunItem>(items: readonly T[], item: T): T[] {
   const index = items.indexOf(item);
-  if (index < 0) return [item];
-  const same = (candidate: T) => candidate.name === item.name && candidate.name.length > 0 && candidate.segment === item.segment && candidate.settled && !candidate.expanded;
+  if (index < 0 || !item.settled || item.expanded || item.successful === false) return [item];
+  const same = (candidate: T) => candidate.name === item.name && candidate.name.length > 0 && candidate.segment === item.segment && candidate.settled && !candidate.expanded && candidate.successful !== false;
   let start = index;
   let end = index;
   while (start > 0 && same(items[start - 1])) start--;
@@ -145,11 +148,14 @@ export function toolRunFor<T extends RunItem>(items: readonly T[], item: T): T[]
 
 export const toolRunSummary = (run: readonly RunItem[]): string => `✓ ${run.length} actions · ${run[0].name}`;
 
-type TrackedTool = RunItem & { component: object };
+type NativeNode = { k: string; p?: Record<string, unknown>; c?: readonly unknown[]; key?: string };
+type TrackedTool = RunItem & { component: object; url: string; image: boolean; nativeTool?: boolean; disclosure?: TrackedTool[] };
 type ToolComponentPrototype = {
   render(this: object, width: number): readonly string[];
+  describe(this: object, context?: unknown): NativeNode;
+  handleNativeEvent(this: object, event: unknown): unknown;
   updateResult(this: object, result: unknown, isPartial?: boolean, id?: unknown): unknown;
-  setExecutionStarted(this: object): unknown;
+  setExecutionStarted(this: object, id?: unknown): unknown;
   setExpanded(this: object, expanded: boolean): unknown;
   dispose(this: object): unknown;
 };
@@ -157,111 +163,156 @@ type ToolComponentPrototype = {
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null ? value as Record<string, unknown> : undefined;
 
-/** OMP has no work-group hook: collapse consecutive same-tool rows by patching the public component
- *  render pass. Ctrl+O (`setExpanded`) and `/fold off` return every row unchanged.
- *  shortcut: patches `ToolExecutionComponent.prototype`; re-check on OMP upgrades. */
-async function installToolRunFolding(pi: HostApi, mode: RenderMode): Promise<(() => void) | undefined> {
-  let prototype: ToolComponentPrototype | undefined;
-  try {
-    // Static import cannot work: this subpath exists only on OMP, and must not break Pi loads.
-    // The host class is not exported through the extension API; this is its documented subpath shape.
-    const componentModule = await import('@earendil-works/pi-tui/chat/tool-execution') as unknown as { ToolExecutionComponent?: { prototype: ToolComponentPrototype } };
-    prototype = componentModule.ToolExecutionComponent?.prototype;
-  } catch {
-    return undefined;
-  }
-  if (!prototype || typeof prototype.render !== 'function') return undefined;
-  // Static import cannot work: Pi's TUI has no theme singleton; OMP's root does.
-  const themeModule = await import('@earendil-works/pi-tui/theme').catch(() => undefined) as { theme?: RowTheme } | undefined;
+/** Guarded OMP component seam: per-action links for ANSI, native toggles for TSP.
+ * shortcut: patches ToolExecutionComponent; unknown native nodes stay stock. */
+export function installOmpToolComponents(pi: HostApi, mode: RenderMode, prototype: ToolComponentPrototype, theme?: RowTheme): () => void {
   const originalRender = prototype.render;
+  const originalDescribe = prototype.describe;
+  const originalNativeEvent = prototype.handleNativeEvent;
   const originalUpdate = prototype.updateResult;
   const originalStarted = prototype.setExecutionStarted;
   const originalExpanded = prototype.setExpanded;
   const originalDispose = prototype.dispose;
   const tracks = new WeakMap<object, TrackedTool>();
   const live = new Set<TrackedTool>();
+  const actions = new Map<string, TrackedTool>();
   let segment = 0;
   const track = (component: object): TrackedTool => {
     let tracked = tracks.get(component);
     if (!tracked) {
-      tracked = { component, name: '', segment, settled: false, expanded: false };
+      tracked = { component, url: `${actionLinkPrefix}${++nextActionId}`, name: '', segment, settled: false, expanded: false, image: false, successful: true };
       tracks.set(component, tracked);
       live.add(tracked);
+      actions.set(tracked.url, tracked);
     }
     return tracked;
   };
-  prototype.updateResult = function (this: object, result, isPartial, id) {
+  const runFor = (tracked: TrackedTool) => toolRunFor([...live], tracked);
+  const expand = (tracked: TrackedTool, expanded: boolean) => {
+    const members = tracked.disclosure ?? runFor(tracked);
+    for (const member of members) {
+      if (!live.has(member)) continue;
+      prototype.setExpanded.call(member.component, expanded);
+      member.disclosure = expanded && members.length > 1 ? members : undefined;
+    }
+  };
+  prototype.updateResult = function (result, isPartial, id) {
     const tracked = track(this);
     tracked.settled = isPartial !== true;
-    if (!tracked.settled) tracked.name = '';
+    const frame = asRecord(result);
+    tracked.image = hasImage(frame as ToolResult | undefined);
+    const exitCode = asRecord(frame?.details)?.exitCode;
+    tracked.successful = frame?.isError !== true && !(typeof exitCode === 'number' && exitCode !== 0) && !tracked.image;
     return originalUpdate.call(this, result, isPartial, id);
   };
-  prototype.setExecutionStarted = function (this: object) {
+  prototype.setExecutionStarted = function (id) {
     track(this).settled = false;
-    return originalStarted.call(this);
+    return originalStarted.call(this, id);
   };
-  prototype.setExpanded = function (this: object, expanded) {
-    track(this).expanded = expanded === true;
+  prototype.setExpanded = function (expanded) {
+    const tracked = track(this);
+    tracked.expanded = expanded === true;
+    tracked.disclosure = undefined;
     return originalExpanded.call(this, expanded);
   };
-  prototype.render = function (this: object, width) {
+  prototype.render = function (width) {
     const rows = originalRender.call(this, width);
+    if (!mode.isEnabled()) return rows;
     const tracked = track(this);
-    // The card's Box starts with a blank padding row; the activity row is the first visible one.
-    const first = rows.map(row => Tui.stripTerminalSequences?.(row) ?? row).find(row => row.trim().length > 0) ?? '';
-    const match = /^\s*[✓✗▾…]\s+([a-z_]+)\b/.exec(first);
-    // Keep the name across expansion: the native card no longer starts with the compact row.
+    const first = rows.find(row => (Tui.stripTerminalSequences?.(row) ?? row).trim().length > 0) ?? '';
+    const plain = Tui.stripTerminalSequences?.(first) ?? first;
+    const match = /^\s*[✓✗▾…]\s+([a-z_]+)\b/.exec(plain);
     if (match) tracked.name = match[1];
     else if (!tracked.expanded) tracked.name = '';
-    // A click on a compact row toggles tool details through the registered action-link scheme.
-    // An expanded card links only its first plain row so a second click can fold it again.
-    const clickable = (shown: readonly string[]) => {
-      if (!tracked.name) return shown;
-      if (!tracked.expanded) return shown.map(withActionLink);
-      let linked = false;
-      return shown.map(row => {
-        if (linked || row.trim().length === 0 || row.includes('\x1b]8;')) return row;
-        linked = true;
-        return withActionLink(row);
-      });
+    if (!tracked.name || tracked.image) return rows;
+    const link = (shown: readonly string[]) => {
+      if (!tracked.expanded) return shown.map(row => withActionLink(row, tracked.url));
+      const header = shown.findIndex(row => (Tui.stripTerminalSequences?.(row) ?? row).trim().length > 0 && !row.includes('\x1b]8;'));
+      if (header < 0) return shown;
+      const linked = shown.slice();
+      linked[header] = withActionLink(linked[header], tracked.url);
+      return linked;
     };
-    if (!mode.isEnabled() || !tracked.name || !tracked.settled || tracked.expanded) return clickable(rows);
-    if (!first.trimStart().startsWith('✓')) return clickable(rows);
-    const run = toolRunFor([...live], tracked);
-    if (run.length < 2) return clickable(rows);
+    const run = runFor(tracked);
+    if (run.length < 2) return link(rows);
     if (run[0] !== tracked) return [];
-    const theme = themeModule?.theme;
-    return clickable([activityRow(activityHeading(toolRunSummary(run), theme), width, theme)]);
+    return link([activityRow(activityHeading(toolRunSummary(run), theme), width, theme)]);
   };
-  prototype.dispose = function (this: object) {
+  prototype.describe = function (context) {
+    const node = originalDescribe.call(this, context);
+    const tracked = track(this);
+    tracked.nativeTool = node.k === 'tool';
+    if (!mode.isEnabled() || node.k !== 'tool') return node;
+    const name = typeof node.p?.role === 'string' ? /^omp\.tool\.([a-z_]+)$/.exec(node.p.role)?.[1] : undefined;
+    if (!name || !(ompCompactToolNames as readonly string[]).includes(name)) return node;
+    tracked.name = name;
+    tracked.settled = ['done', 'error', 'cancelled'].includes(String(node.p?.status));
+    tracked.successful = node.p?.status === 'done' && tracked.successful !== false && !tracked.image;
+    if (tracked.expanded || tracked.image) return node;
+    const run = runFor(tracked);
+    if (run.length > 1 && run[0] !== tracked) return { k: 'col', c: [] };
+    // Keep stock bodies and native toggle routing: only presentation and the collapsed preview change.
+    const props = { ...node.p, frame: 'inline', collapsed: true, preview: tracked.settled ? 'none' : { tail: previewLines },
+      ...(run.length > 1 ? { title: toolRunSummary(run), target: undefined, meta: undefined, badges: undefined } : {}) };
+    return { ...node, p: props };
+  };
+  prototype.handleNativeEvent = function (event) {
+    const toggle = asRecord(event);
     const tracked = tracks.get(this);
-    if (tracked) { live.delete(tracked); tracks.delete(this); }
+    if (mode.isEnabled() && tracked?.nativeTool && tracked.name && toggle?.type === 'toggle' && toggle.key === '' && typeof toggle.collapsed === 'boolean') {
+      expand(tracked, !toggle.collapsed);
+      return;
+    }
+    return originalNativeEvent.call(this, event);
+  };
+  prototype.dispose = function () {
+    const tracked = tracks.get(this);
+    if (tracked) { live.delete(tracked); tracks.delete(this); actions.delete(tracked.url); }
     return originalDispose.call(this);
   };
   const offs: (() => void)[] = [];
-  const on = (event: string, handler: (event: unknown) => void) => {
+  const on = (event: string, handler: (event: unknown, ctx?: unknown) => void) => {
     const off = pi.on?.(event, handler);
     if (typeof off === 'function') offs.push(off as () => void);
   };
-  // Prose and custom cards separate work runs; tool batches in consecutive assistant messages do not.
+  pi.registerLinkScheme?.('pi-fold');
+  on('link_activate', (event, ctx) => {
+    if (!mode.isEnabled()) return;
+    const url = asRecord(event)?.url;
+    const tracked = typeof url === 'string' ? actions.get(url) : undefined;
+    const ui = asRecord(asRecord(ctx)?.ui);
+    if (!tracked?.name || typeof ui?.setWidget !== 'function') return;
+    expand(tracked, !tracked.expanded);
+    // OMP exposes no standalone repaint; removing our absent widget schedules one without UI chrome.
+    ui.setWidget.call(ui, 'pi-fold:refresh', undefined);
+  });
   on('message_start', event => {
     const role = asRecord(asRecord(event)?.message)?.role;
     if (role === 'user' || role === 'custom') segment++;
   });
   on('message_end', event => {
     const message = asRecord(asRecord(event)?.message);
-    if (message?.role !== 'assistant' || !Array.isArray(message.content)) return;
-    if (message.content.some(block => isTextBlock(block) && block.text.trim().length > 0)) segment++;
+    if (message?.role === 'assistant' && Array.isArray(message.content) && message.content.some(block => isTextBlock(block) && block.text.trim().length > 0)) segment++;
   });
   on('turn_start', () => { segment++; });
+  let repaint: (() => void) | undefined;
+  on('session_start', (_event, ctx) => {
+    const ui = asRecord(asRecord(ctx)?.ui);
+    repaint = typeof ui?.setWidget === 'function' ? () => (ui.setWidget as (key: string, content: undefined) => void).call(ui, 'pi-fold:refresh', undefined) : undefined;
+  });
+  const modeOff = mode.onChange?.(() => repaint?.());
+  if (modeOff) offs.push(modeOff);
   return () => {
-    prototype!.render = originalRender;
-    prototype!.updateResult = originalUpdate;
-    prototype!.setExecutionStarted = originalStarted;
-    prototype!.setExpanded = originalExpanded;
-    prototype!.dispose = originalDispose;
+    prototype.render = originalRender;
+    prototype.describe = originalDescribe;
+    prototype.handleNativeEvent = originalNativeEvent;
+    prototype.updateResult = originalUpdate;
+    prototype.setExecutionStarted = originalStarted;
+    prototype.setExpanded = originalExpanded;
+    prototype.dispose = originalDispose;
     for (const off of offs.splice(0)) off();
     live.clear();
+    actions.clear();
   };
 }
 
@@ -284,17 +335,13 @@ export async function registerOmpToolRows(pi: HostApi, mode: RenderMode): Promis
   };
 }
 
-/** Clicking a compact row raises `link_activate`; OMP's supported expansion toggle is global (Ctrl+O). */
-export function installActionLinks(pi: HostApi): (() => void) | undefined {
-  if (typeof pi.registerLinkScheme !== 'function' || typeof pi.on !== 'function') return undefined;
-  pi.registerLinkScheme('pi-fold');
-  const off = pi.on('link_activate', (event, ctx) => {
-    if (asRecord(event)?.url !== actionLinkUrl) return;
-    const ui = asRecord(asRecord(ctx)?.ui);
-    if (typeof ui?.getToolsExpanded !== 'function' || typeof ui.setToolsExpanded !== 'function') return;
-    ui.setToolsExpanded.call(ui, !ui.getToolsExpanded.call(ui));
-  });
-  return typeof off === 'function' ? off as () => void : undefined;
+async function loadOmpToolComponents(): Promise<ToolComponentPrototype | undefined> {
+  try {
+    const componentModule = await import('@earendil-works/pi-tui/chat/tool-execution') as unknown as { ToolExecutionComponent?: { prototype: ToolComponentPrototype } };
+    return componentModule.ToolExecutionComponent?.prototype;
+  } catch {
+    return undefined;
+  }
 }
 
 async function installOmpToolRows(pi: HostApi, mode: RenderMode): Promise<(() => void) | undefined> {
@@ -305,7 +352,9 @@ async function installOmpToolRows(pi: HostApi, mode: RenderMode): Promise<(() =>
   } catch {
     return undefined;
   }
-  if (!registry || typeof registry !== 'object') return undefined;
+  const prototype = await loadOmpToolComponents();
+  if (!registry || !prototype || !ompToolRowsSupported(pi, registry, prototype)) return undefined;
+  const themeModule = await import('@earendil-works/pi-tui/theme').catch(() => undefined) as { theme?: RowTheme } | undefined;
   const originals = new Map<string, ToolRendererLike>();
   for (const name of ompCompactToolNames) {
     const stock = registry[name];
@@ -313,11 +362,9 @@ async function installOmpToolRows(pi: HostApi, mode: RenderMode): Promise<(() =>
     originals.set(name, stock);
     registry[name] = wrapOmpToolRenderer(name, stock, mode);
   }
-  const restoreLinks = installActionLinks(pi);
-  const restoreFolding = await installToolRunFolding(pi, mode);
+  const restoreFolding = installOmpToolComponents(pi, mode, prototype, themeModule?.theme);
   return () => {
-    restoreLinks?.();
-    restoreFolding?.();
+    restoreFolding();
     for (const [name, stock] of originals) registry![name] = stock;
   };
 }

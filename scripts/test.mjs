@@ -10,7 +10,7 @@ required.push('reload-lifecycle.test.mjs', 'ordinary-prompts.test.mjs', 'work-st
 required.push('modern-skill-prompts.test.mjs', 'inspection-wheel.test.mjs');
 required.push('display-line-cache.test.mjs');
 required.push('display-cache-lifecycle.test.mjs');
-required.push('fold-command.test.mjs', 'fold-shortcut.test.mjs', 'follow-display.test.mjs');
+required.push('fold-command.test.mjs', 'follow-display.test.mjs');
 required.push('mixed-thinking.test.mjs', 'work-strip.test.mjs', 'work-strip-subagents.test.mjs', 'work-strip-preview.test.mjs', 'work-strip-spacing.test.mjs');
 required.push('mixed-action-groups.test.mjs', 'action-group-preview.test.mjs');
 required.push('fullscreen-overlays.test.mjs', 'runtime-compatibility.test.mjs', 'compatibility-fallbacks.test.mjs');

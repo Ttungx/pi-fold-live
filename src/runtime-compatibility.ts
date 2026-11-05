@@ -23,10 +23,25 @@ const requirements = {
 export type FoldFeature = keyof typeof requirements;
 const labels: Record<FoldFeature, string> = { tools: 'Tool cards', images: 'Tool images', thinking: 'Thinking', prompts: 'Prompt folding', skills: 'Skill prompts', workflows: 'Workflow panes', subagents: 'Subagent groups', work: 'Work sections', inspection: 'Inspection picker', reveal: 'Inspection scrolling', overlays: 'Overlay protection', permissions: 'Permission presentation' };
 const method = (object: any, path: string) => typeof path.split('.').reduce((value, key) => value?.[key], object) === 'function';
+const hasMethod = (object: unknown, key: string): boolean =>
+  typeof object === 'object' && object !== null && key in object && typeof (object as Record<string, unknown>)[key] === 'function';
+
+/** OMP adapters use different seams; probing them must not mark Pi-only adapters available. */
+export function ompToolRowsSupported(api: unknown, registry: unknown, prototype: unknown): boolean {
+  return !hasMethod(api, 'registerToolRenderer') && hasMethod(api, 'registerLinkScheme')
+    && hasMethod(api, 'on') && registry !== null && typeof registry === 'object'
+    && ['render', 'describe', 'handleNativeEvent', 'updateResult', 'setExecutionStarted', 'setExpanded', 'dispose'].every(key => hasMethod(prototype, key));
+}
+
+export function ompThinkingSupported(api: unknown, prototype: unknown): boolean {
+  return !hasMethod(api, 'registerToolRenderer') && hasMethod(api, 'registerAssistantThinkingRenderer')
+    && ['updateContent', 'render', 'describe', 'markTranscriptBlockFinalized', 'setHideThinkingBlock', 'dispose'].every(key => hasMethod(prototype, key));
+}
 
 /** Probe once before loading feature modules. Instance guards still protect each native row. */
 export function inspectRuntime(api: any, agent: any = core, terminal: any = tui) {
   const failures = new Map<FoldFeature, string[]>();
+  const adapters = new Set<string>();
   for (const [feature, needs] of Object.entries(requirements)) {
     const missing: string[] = [];
     for (const [source, paths] of Object.entries(needs)) {
@@ -38,20 +53,25 @@ export function inspectRuntime(api: any, agent: any = core, terminal: any = tui)
   }
   const dependencies: Partial<Record<FoldFeature, FoldFeature>> = { images: 'tools', reveal: 'inspection', overlays: 'inspection' };
   const available = (feature: FoldFeature): boolean => !failures.get(feature)?.length && (!dependencies[feature] || available(dependencies[feature]!));
+  const version = typeof agent.VERSION === 'string' ? agent.VERSION : 'unknown';
+  // OMP releases are 18.x; Pi is still 1.x. The host label scopes Pi-only diagnostics; feature gates stay probe-based.
+  const host = Number.parseInt(version, 10) >= 2 ? 'OMP' : 'Pi';
   return {
-    version: typeof agent.VERSION === 'string' ? agent.VERSION : 'unknown',
+    version,
+    host,
     available,
+    recordAdapter(name: string) { adapters.add(name); },
     disable(feature: FoldFeature, reason: string) { const reasons = failures.get(feature)!; if (!reasons.includes(reason)) reasons.push(reason); },
     get state(): 'full' | 'partial' | 'unavailable' {
       const features = Object.keys(requirements) as FoldFeature[];
       const count = features.filter(available).length;
-      return count === features.length ? 'full' : count ? 'partial' : 'unavailable';
+      return count === features.length ? 'full' : count || adapters.size ? 'partial' : 'unavailable';
     },
     describe() {
       const disabled = (Object.keys(requirements) as FoldFeature[]).filter(feature => !available(feature));
-      // OMP releases are 18.x; Pi is still 1.x. This is a label, never a feature gate.
-      const host = Number.parseInt(this.version, 10) >= 2 ? 'OMP' : 'Pi';
-      return `Compatibility: ${this.state} (${host} ${this.version})` + disabled.map(feature => `\n${labels[feature]} unavailable: ${failures.get(feature)?.join(', ') || `${labels[dependencies[feature]!]} unavailable`}`).join('');
+      return `Compatibility: ${this.state} (${this.host} ${this.version})`
+        + (adapters.size ? `\nOMP adapters active: ${[...adapters].join(', ')}` : '')
+        + disabled.map(feature => `\n${this.host === 'OMP' ? 'Pi ' : ''}${labels[feature]} unavailable: ${failures.get(feature)?.join(', ') || `${labels[dependencies[feature]!]} unavailable`}`).join('');
     },
   };
 }

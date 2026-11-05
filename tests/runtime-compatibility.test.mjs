@@ -18,6 +18,8 @@ for (const [symbol, feature] of [['UserMessageComponent','prompts'], ['Extension
   assert.equal(report.available('tools'), true, 'independent tool cards remain available');
   assert.match(report.describe(), new RegExp(symbol));
 }
+assert.equal(inspectRuntime(pi, { ...core, VERSION: '18.16.0' }, tui).host, 'OMP');
+assert.equal(inspectRuntime(pi).host, 'Pi');
 const report = inspectRuntime(pi);
 report.disable('inspection', 'ui.select missing');
 assert.equal(report.available('reveal'), false);
@@ -30,7 +32,7 @@ assert.equal(inspectRuntime(pi, {}, {}).state, 'unavailable');
 const fixture = mkdtempSync(path.join(tmpdir(), 'fold-missing-exports-'));
 try {
   mkdirSync(path.join(fixture, 'src'));
-  for (const file of ['index.ts', 'src/runtime-compatibility.ts', 'src/display-mode.ts', 'src/fold-command.ts', 'src/omp-tool-rows.ts', 'src/display-card.ts', 'src/display-line-cache.ts']) copyFileSync(new URL('../' + file, import.meta.url), path.join(fixture, file));
+  for (const file of ['index.ts', 'src/runtime-compatibility.ts', 'src/display-mode.ts', 'src/fold-command.ts', 'src/omp-tool-rows.ts', 'src/omp-thinking.ts', 'src/native-method-chain.ts', 'src/display-card.ts', 'src/display-line-cache.ts']) copyFileSync(new URL('../' + file, import.meta.url), path.join(fixture, file));
   writeFileSync(path.join(fixture, 'package.json'), '{"type":"module"}');
   for (const name of ['pi-coding-agent', 'pi-tui']) {
     const folder = path.join(fixture, 'node_modules/@earendil-works', name); mkdirSync(folder, { recursive: true });
@@ -42,6 +44,8 @@ const commands = new Map(), hooks = new Map(), notices = [];
 await register({on(name,fn){hooks.set(name,fn)},events:{on(){},emit(){}},registerCommand(name,command){commands.set(name,command)}});
 await commands.get('fold').handler('on',{hasUI:false,ui:{notify(message){notices.push(message)}}});
 if (!notices[0]?.includes('Compatibility: unavailable') || notices[0].includes('Pi Fold on')) throw new Error(notices.join('\\n'));
+hooks.get('session_start')({}, {hasUI:true,ui:{notify(message){notices.push(message)}},sessionManager:{getBranch(){},buildContextEntries(){}}});
+if (notices.length !== 1) throw new Error('OMP startup must stay silent:\\n' + notices.join('\\n'));
 hooks.get('session_shutdown')();
 console.log('missing exports: native fallback');`);
   // transform-types keeps the native ESM loader (so absent named exports stay absent) while

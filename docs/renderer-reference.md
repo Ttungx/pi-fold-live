@@ -53,7 +53,7 @@ The newest tool call renders as a live window: one heading plus the last three r
 
 Thinking follows on one row. While a thinking phase runs, its header shows the newest recorded line and moves as the text streams; consecutive segments stay in that row and never fold and reopen between them. The phase ends, and the row folds to its recorded summary, when the next action starts (a tool call), a visible reply appears, or the turn stops. The pane stays closed unless you open it. This is the session-local **follow** display, on by default; `/fold follow off` restores the one-row-per-action display without the streaming label. Follow respects compact-off and the compatibility fallbacks, and changes no message, result, or transcript entry.
 
-Run `/fold collapse` to collapse completed and historical work sections. Ctrl+Alt+W toggles these sections: if any section or retained nested pane is expanded, collapse them all; otherwise expand them all. Explicit collapse also closes nested actions, Details, thinking, codemode, workflows, and subagent/DDD attention panes, and resets their scroll positions. Reopening a work section starts with nested panes closed. Automatic folding preserves manual pane expansion. Active and waiting work stays unchanged by the shortcut. `/fold expand` opens all sections. `/fold shortcut off` disables the session shortcut; `/fold` opens these choices.
+Run `/fold collapse` to collapse completed and historical work sections. Explicit collapse also closes nested actions, Details, thinking, codemode, workflows, and subagent/DDD attention panes, and resets their scroll positions. Reopening a work section starts with nested panes closed. Automatic folding preserves manual pane expansion. Active and waiting work stays unchanged. `/fold expand` opens all sections, and `/fold` opens these choices.
 
 When the current turn has a supported work strip, Pi Statusline can omit duplicate execution state and elapsed time through the `compact-renderer:work-strip:v1` event. Its Execution display preference supports Automatic (follow strip ownership), Show (honor enabled execution fields even with a strip), and Hide (omit both state and elapsed time). Other footer fields and native Fleet controls remain unchanged. Compact-off and renderer disposal release this temporary ownership without changing saved preferences.
 
@@ -63,7 +63,7 @@ Run `PI_RUNTIME=/path/to/runtime node scripts/preview-work-strip.mjs`. Optionall
 
 ## Controls
 
-`/fold` opens the Pi Fold menu for display mode, collapse/expand, follow, and shortcut settings. Typed `on`, `off`, `toggle`, `status`, `collapse`, `expand`, `follow on|off`, and `shortcut on|off` are available. Version 3 removes the old `/compact-rendering` and `/work` commands without aliases. This display mode is session-local and starts enabled.
+`/fold` opens the Pi Fold menu for display mode, collapse/expand, and follow settings. Typed `on`, `off`, `toggle`, `status`, `collapse`, `expand`, and `follow on|off` are available. Version 3 removes the old `/compact-rendering` and `/work` commands without aliases. This display mode is session-local and starts enabled.
 
 `/inspect` opens a native picker for tool groups, subagent notices, thinking groups, and prompt cards. Selection brings the block into view, highlights its header and selected item, and shows an inspection status in the footer.
 

@@ -7,7 +7,7 @@ const { createDisplayMode } = await loadSource('./display-mode.ts');
 const { projectedChildren, workEvidenceType, recordedWorkEvidence } = await loadSource('./work-strip-view.ts');
 
 function fixture() {
-  const hooks = new Map(), bus = new Map(), commands = new Map(), shortcuts = new Map(), inputs = new Set(), notices = [];
+  const hooks = new Map(), bus = new Map(), commands = new Map(), inputs = new Set(), notices = [];
   const subscribe = (map, name, fn) => {
     const set = map.get(name) || new Set(); map.set(name, set); set.add(fn); return () => set.delete(fn);
   };
@@ -18,7 +18,6 @@ function fixture() {
     events: { on: (name, fn) => subscribe(bus, name, fn), emit(name, value) { for (const fn of [...bus.get(name) || []]) fn(value); } },
     getAllTools: () => [], appendEntry: (kind, data) => manager.appendCustomEntry(kind, data),
     registerCommand: (name, definition) => commands.set(name, definition),
-    registerShortcut: (name, definition) => shortcuts.set(name, definition),
   };
   pi.events.on('compact-renderer:work-strip:v1', value => { ownership = value.ownsExecutionStatus; });
   const mode = createDisplayMode(), workControls = registerWorkStrip(pi, mode), dispose = workControls.dispose;
@@ -61,7 +60,7 @@ function fixture() {
   };
   const choices = () => { const items = []; pi.events.emit('compact-renderer:inspect:v1', { add: item => items.push(item) }); return items; };
   const work = args => commands.get('fold').handler(args, ctx);
-  return { manager, mode, dispose, display, event, add, assistant, tool, save, paint, choices, work, shortcuts, notices, get ownership() { return ownership; } };
+  return { manager, mode, dispose, display, event, add, assistant, tool, save, paint, choices, work, notices, get ownership() { return ownership; } };
 }
 
 // Valid completion metadata cannot create execution activity where none occurred.
@@ -83,8 +82,6 @@ for (const saved of [false, true]) for (const thought of ['none', 'separate', 'm
     assert.ok(!projected.rows.some(row => row.constructor.name === 'WorkStripHeader'), 'response and thinking alone receive no work strip');
     assert.equal(f.choices().filter(item => item.kind === 'Work').length, 0, 'nonactivity does not enter Work inspection');
     assert.equal(f.ownership, false, 'nonactivity leaves execution-status ownership native');
-    f.shortcuts.get('ctrl+alt+w').handler();
-    assert.ok(!f.paint().rows.some(row => row.constructor.name === 'WorkStripHeader'), 'shortcut with no work sections is a no-op');
     await f.work('collapse'); assert.deepEqual(f.paint().lines, native, '/fold cannot fold a direct response');
   } finally { f.dispose(); f.mode.dispose(); }
 }
@@ -189,16 +186,9 @@ for (const saved of [false, true]) for (const thought of ['none', 'separate', 'm
     assert.ok(!expanded.rows.some(row => row.constructor.name === 'WorkChild' && row.children[0] === final.row), 'final reply is outside the activity child indentation');
     await f.work('collapse');
     assert.doesNotMatch(f.paint().text, /HIDDEN_COMMENTARY|HIDDEN_TOOL_CONTENT/);
-    await f.work('expand'); await f.work('shortcut off');
-    f.shortcuts.get('ctrl+alt+w').handler();
-    assert.equal(header.open, true, 'disabled session shortcut leaves work expanded');
-    await f.work('shortcut on'); f.shortcuts.get('ctrl+alt+w').handler();
-    assert.equal(header.open, false, 'enabled native shortcut toggles completed work closed');
-    f.shortcuts.get('ctrl+alt+w').handler();
-    assert.equal(header.open, true, 'repeated shortcut toggles completed work open');
-    assert.ok(f.notices.some(notice => notice.message === 'Toggle work shortcut: off'));
-    assert.ok(f.notices.some(notice => notice.message === 'Toggle work shortcut: on'));
-    f.shortcuts.get('ctrl+alt+w').handler();
+    await f.work('expand');
+    assert.equal(header.open, true, 'expand reopens completed work');
+    await f.work('collapse');
     assert.equal(header.open, false, 'return to the folded state before checking native thinking visibility');
     final.row.setHideThinkingBlock(false);
     assert.match(f.paint().text, /EXACT_FINAL_RECORDED_THINKING/, 'explicit native thinking expansion remains visible even when the strip is folded');
@@ -221,10 +211,10 @@ for (const saved of [false, true]) for (const thought of ['none', 'separate', 'm
     assert.equal(headers.length, 2, 'fixture contains two completed work sections');
     headers[0].manual = true; headers[0].open = true;
     headers[1].manual = true; headers[1].open = false;
-    f.shortcuts.get('ctrl+alt+w').handler();
-    assert.deepEqual(headers.map(header => header.open), [false, false], 'any expanded eligible section makes the toggle collapse all eligible sections');
-    f.shortcuts.get('ctrl+alt+w').handler();
-    assert.deepEqual(headers.map(header => header.open), [true, true], 'when all eligible sections are collapsed, the toggle expands all');
+    await f.work('collapse');
+    assert.deepEqual(headers.map(header => header.open), [false, false], 'collapse folds all eligible sections');
+    await f.work('expand');
+    assert.deepEqual(headers.map(header => header.open), [true, true], 'expand opens all eligible sections');
 
     f.event('agent_start');
     f.add({ role: 'user', content: 'Waiting work.' }); f.tool();
@@ -233,8 +223,8 @@ for (const saved of [false, true]) for (const thought of ['none', 'separate', 'm
     const waiting = f.paint().rows.findLast(row => row.constructor.name === 'WorkStripHeader');
     assert.equal(waiting.state, 'waiting', 'fixture contains a waiting work section');
     waiting.open = true;
-    f.shortcuts.get('ctrl+alt+w').handler();
-    assert.equal(waiting.open, true, 'toggle leaves waiting work expanded while collapsing completed sections');
+    await f.work('collapse');
+    assert.equal(waiting.open, true, 'collapse leaves waiting work expanded while folding completed sections');
     assert.deepEqual(headers.map(header => header.open), [false, false]);
   } finally { f.dispose(); f.mode.dispose(); }
 }
@@ -246,9 +236,9 @@ for (const saved of [false, true]) for (const thought of ['none', 'separate', 'm
     f.add({ role: 'user', content: 'Active recorded work.' }); f.tool();
     const header = f.paint().rows.find(row => row.constructor.name === 'WorkStripHeader');
     assert.equal(header.state, 'working');
-    await f.work('collapse'); f.shortcuts.get('ctrl+alt+w').handler();
+    await f.work('collapse');
     assert.equal(header.open, true, 'bulk collapse controls preserve active work visibility');
   } finally { f.dispose(); f.mode.dispose(); }
 }
 
-console.log('Work hierarchy: no strip for direct/thinking-only responses, saved evidence, native child indentation, mixed final spacing, commands and shortcut preference passed');
+console.log('Work hierarchy: no strip for direct/thinking-only responses, saved evidence, native child indentation, mixed final spacing, commands and collapse/expand passed');

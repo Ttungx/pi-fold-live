@@ -21,8 +21,8 @@ pi install git:github.com/Ttungx/pi-fold-live
 Pin a release with a tag, and remove it with the same pinned source:
 
 ```sh
-pi install git:github.com/Ttungx/pi-fold-live@v1.0.0
-pi remove git:github.com/Ttungx/pi-fold-live@v1.0.0
+pi install git:github.com/Ttungx/pi-fold-live@v1.1.1
+pi remove git:github.com/Ttungx/pi-fold-live@v1.1.1
 ```
 
 Restart Pi, or run `/reload` when the session and its background work are idle.
@@ -38,13 +38,12 @@ Install this **instead of** `@notrico/pi-fold`. Two transcript renderers in one 
 | Keep the running action open | `/fold follow on` · `/fold follow off` |
 | Open a block | Click its arrow, or use `/inspect` |
 | Return to typing | Esc |
-| Toggle completed work sections | Ctrl+Alt+W |
 | Collapse / expand work sections | `/fold collapse` · `/fold expand` |
 | Show native Pi rendering | `/fold off` |
 
 `/fold follow` is session-local and starts **on**. With it off, every action renders as one row while it runs, which is the upstream display.
 
-Ctrl+Alt+W and `/fold collapse` only touch completed work. The running action keeps following regardless.
+`/fold collapse` only touches completed work. The running action keeps following regardless.
 
 ## Notes
 
@@ -87,22 +86,22 @@ extensions:
   - /path/to/pi-fold-live
 ```
 
-On OMP, Pi Fold renders the plain-text and diff built-ins (`read`, `bash`, `grep`, `glob`, `find`, `lsp`, `eval`, `web_search`, `edit`, `write`, `apply_patch`) the way this fork does on Pi: one action row, and a fixed four-row live window showing the newest three output lines while the call runs. A settled action is one row with `✓` or `✗`; consecutive settled actions of the same tool fold into one `✓ N actions · <tool>` block. Ctrl+O and `/fold off` return OMP's native cards (including full diffs).
+On OMP, Pi Fold compacts the plain-text and diff built-ins (`read`, `bash`, `grep`, `glob`, `find`, `lsp`, `eval`, `web_search`, `edit`, `write`, `apply_patch`). Plain terminals show one action row and a fixed live window with the newest three output lines; settled actions become one row. Consecutive successful actions of the same tool fold into one `✓ N actions · <tool>` block. Failures and images stay separate. Native TSP terminals keep their tool bodies and per-card toggles, with borderless compact headers and a three-line tail preview while running. Ctrl+O and `/fold off` return OMP's stock cards and full diffs.
 
-It uses OMP's exported name-keyed `toolRenderers` registry (`@oh-my-pi/pi-tui/tools`) — the only render-only hook OMP 18 exposes for built-ins — plus the component render pass for same-tool run folding. The rest stays OMP-native: `ask`, `task`, `todo`, `wait`, and the other interactive cards keep their own renderers, and OMP's native `Thought for 12s` / `Worked for 12s` folding is unchanged. `/fold status` lists the Pi-only interfaces OMP removed.
+OMP settles that live window as soon as the result arrives; Pi's “keep the last action open until the next starts” follow behavior remains Pi-only. Terminals without native `tool`-node support keep their stock cards.
 
-OMP hides the streaming reasoning body when `hideThinkingBlock: true` in its own config; only a live pulse remains. Set it to `false` to stream the CoT, which folds back to `Thought for 12s` when the thought ends. Pi Fold's compact one-line thinking row is a Pi renderer and is not available through OMP's extension API.
+Thinking streams as one moving row showing the latest recorded line, then folds to a compact finished row. This works with either OMP thinking-visibility preference and does not change the stored reasoning or final reply. Native thinking sections retain their full body and expansion controls. Unfamiliar or image-containing plain-terminal layouts stay native rather than risk hiding reply content.
 
-Clicking a compact row expands tool details, and clicking the expanded card's header folds them again. OMP routes those clicks through extension-owned links, so both settings must be on:
+These adapters probe OMP's exported `toolRenderers` registry and native component interfaces before attaching. `/fold status` distinguishes active OMP adapters from unavailable Pi-only seams. Prompts, skills, subagents, work sections, and interactive cards such as `ask`, `task`, `todo`, and `wait` remain OMP-native.
 
-```yaml
-tui:
-  mouse: true
-extensionRenderers:
-  assistantText: true   # gates extension link schemes
-```
+Expansion depends on the terminal:
 
-`tui.mouse` also makes text selection Shift+drag and wheel scroll Shift+wheel. Ctrl+O remains the keyboard equivalent, and `/fold off` restores the untouched native transcript.
+- **Native TSP:** use the tool header's native toggle. No extension-link or mouse-capture setting is needed for that routing.
+- **Plain terminal:** each compact row has its own extension-link identity; selecting it opens only that action or same-tool group, and selecting its expanded header folds it again. OMP's Alt+O link hints require `extensionRenderers.assistantText: true` and work without mouse capture. Mouse clicks additionally require OMP's `tui.mouse: true`.
+
+Pi Fold never changes `tui.mouse`, `extensionRenderers.assistantText`, or `hideThinkingBlock`. Mouse capture has a reported Shift+wheel conflict in Herdr; do not enable it just to try this plugin. Actual Herdr click/scroll acceptance remains pending; the component playback and CLI startup checks do not prove mouse delivery.
+
+Automatic session-title language belongs to OMP, not this renderer. OMP 18.15 has no `title.language` setting, but it does discover a native `TITLE_SYSTEM.md` prompt override (project config first, then user config). Use that host facility for Chinese title instructions; Pi Fold does not generate titles or make extra model calls.
 
 ## Development
 
@@ -111,6 +110,7 @@ npm install
 npm test
 node scripts/ablation.mjs . A+both   # measure one build; see the script header for arms
 node scripts/omp-rows-ablation.mjs   # full scan vs capped vs shipped OMP row renderer
+bun scripts/omp-runtime-smoke.mjs /path/to/@oh-my-pi/pi-coding-agent
 ```
 
 Runtime modules live in `src/`, regression checks in `tests/`, preview and benchmark runners in `scripts/`, and upstream's detailed notes in `docs/`. `index.ts` is the Pi entry point. `npm test` needs a local `node_modules` (the checks load Pi's own TUI and component classes).

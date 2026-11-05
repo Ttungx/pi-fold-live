@@ -16,7 +16,7 @@ export async function createWorkStripPreview({ stepMs = 1000, inspection = false
   const base = Date.now();
   const assistant = value => ({role:'assistant',content:[{type:'text',text:value}],timestamp:Date.now(),stopReason:'stop',api:'openai-codex-responses',provider:'openai-codex',model:'gpt-6-luna',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}});
   manager.appendCustomMessageEntry('ddd', 'Five recorded maintenance reminders.\n\nThis invented notice has no severity metadata. It stays visible as a compact row. Expand it to inspect this complete text.', true);
-  manager.appendMessage(assistant('Work-strip preview: intermediate content is folded; final replies and decisions remain visible. /inspect or a click opens a strip. Use /fold collapse or /fold expand for explicit control; Ctrl+Alt+W toggles completed work. Run /fixture-work to play 10 seconds of invented progress. Each live reply stays indented until the final reply is confirmed. Scroll up before it finishes to test deferred folding, or manually open its strip to keep it open. /prompt-jump end returns to the latest output. No model or tool runs.'));
+  manager.appendMessage(assistant('Work-strip preview: intermediate content is folded; final replies and decisions remain visible. /inspect or a click opens a strip. Use /fold collapse or /fold expand for explicit control. Run /fixture-work to play 10 seconds of invented progress. Each live reply stays indented until the final reply is confirmed. Scroll up before it finishes to test deferred folding, or manually open its strip to keep it open. /prompt-jump end returns to the latest output. No model or tool runs.'));
   const entries = manager.getBranch();
   const users = entries.map((entry,index)=>entry.message?.role==='user'?index:-1).filter(index=>index>=0);
   for (const [number,start] of users.entries()) {
@@ -66,7 +66,7 @@ export async function createWorkStripPreview({ stepMs = 1000, inspection = false
     code('mixed-code-first');
     recorded('mixed-write', 'write', {path:'/fixture/report.txt',content:'Recorded report.'}, 'Successfully wrote to /fixture/report.txt');
     code('mixed-nested-warning', 'error');
-    manager.appendMessage(assistant('Mixed-action preview: expand the work, then the 4-action and 2-action groups. Open codemode to inspect its recorded content. The nested-error card stays separate. Test /fold collapse, Ctrl+Alt+W, /inspect, and Esc. All content is invented; no tool or model ran.'));
+    manager.appendMessage(assistant('Mixed-action preview: expand the work, then the 4-action and 2-action groups. Open codemode to inspect its recorded content. The nested-error card stays separate. Test /fold collapse, /inspect, and Esc. All content is invented; no tool or model ran.'));
     const finalId = manager.getBranch().at(-1).id;
     manager.appendCustomEntry('compact-renderer:work-settled:v1',{version:1,userId,finalId,endId:finalId,startedAt:base-45000,endedAt:base,outcome:'completed'});
   }

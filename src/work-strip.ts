@@ -59,8 +59,6 @@ export function keepWorkRowVisible(row: any, completed: boolean): boolean {
 export interface WorkStripControls {
   dispose(): void;
   setExpanded(open: boolean): boolean;
-  isShortcutEnabled(): boolean;
-  setShortcutEnabled(enabled: boolean): void;
 }
 
 /** Pi 1.3 display seam. The native tree, transcript, execution and Fleet remain
@@ -69,7 +67,7 @@ export function registerWorkStrip(pi: ExtensionAPI, mode: DisplayMode, version?:
   const owner = Symbol.for('compact-renderer:work-registration:v1'), shared = globalThis as any;
   shared[owner]?.();
   const proto = InteractiveMode.prototype as any;
-  if (!['addMessageToChat', 'handleEvent', 'renderSessionItems'].every(k => typeof proto?.[k] === 'function')) return { dispose() {}, setExpanded: () => false, isShortcutEnabled: () => false, setShortcutEnabled() {} };
+  if (!['addMessageToChat', 'handleEvent', 'renderSessionItems'].every(k => typeof proto?.[k] === 'function')) return { dispose() {}, setExpanded: () => false };
   let disposed = false, ctx: any, host: any, attached: any, detachChat: (() => void) | undefined;
   let turns = new Map<any, Turn>(), sources = new WeakMap<any, any>(), hooks = new Map<any, ToolPane>();
   let selected: WorkStripHeader | ToolPane | undefined, input: (() => void) | undefined, timer: ReturnType<typeof setTimeout> | undefined;
@@ -377,9 +375,6 @@ export function registerWorkStrip(pi: ExtensionAPI, mode: DisplayMode, version?:
       for (const [row, pane] of hooks) request?.add?.({ id: `hook-${[...hooks.keys()].indexOf(row)}`, kind: 'Hook', label: pane.title, focus: () => select(pane, pane) });
     }),
   ];
-  // Use native shortcut dispatch so dialogs and editor input keep their owners.
-  // The command remains available on terminals that do not send modified keys.
-  let shortcut = true;
   const nestedDisclosures = (eligible: Turn[]) => {
     const resets = new Set<() => void>();
     let visibleOpen = false;
@@ -408,24 +403,6 @@ export function registerWorkStrip(pi: ExtensionAPI, mode: DisplayMode, version?:
     redraw();
     return true;
   };
-  const toggleCompleted = () => {
-    if (disposed || !ctx || !mode.isEnabled() || !attached) return false;
-    project(attached.children);
-    const eligible = [...turns.values()].filter(turn => turn.activity && !['working', 'waiting'].includes(turn.header.state));
-    if (!eligible.length) return true;
-    const nested = nestedDisclosures(eligible);
-    const open = !eligible.some(turn => turn.header.open) && !nested.visibleOpen;
-    release();
-    if (!open) nested.collapse();
-    for (const turn of eligible) { turn.header.manual = true; turn.header.open = open; }
-    pi.events.emit('compact-renderer:inspection-ended:v1', {});
-    redraw();
-    return true;
-  };
-  pi.registerShortcut?.('ctrl+alt+w', {
-    description: 'Toggle completed work sections (enabled with /fold shortcut)',
-    handler: () => { if (shortcut) toggleCompleted(); },
-  });
   const dispose = () => {
     if (disposed) return; disposed = true;
     release(); input?.(); if (timer) clearTimeout(timer); if (ticker) clearInterval(ticker);
@@ -440,7 +417,5 @@ export function registerWorkStrip(pi: ExtensionAPI, mode: DisplayMode, version?:
   return {
     dispose,
     setExpanded: setAll,
-    isShortcutEnabled: () => shortcut,
-    setShortcutEnabled: enabled => { if (!disposed) shortcut = enabled; },
   };
 }

@@ -16,7 +16,7 @@ Before loading a feature, Fold checks its required exports and prototype methods
 
 Completion requires a terminal assistant message with visible text and settled background work. Empty terminal responses do not promote earlier commentary to a final reply. Older turns without completion evidence show Work details without an invented duration. Manual expansion and scrollback take precedence over automatic folding.
 
-Ctrl+Alt+W toggles eligible completed and historical sections together. If any is expanded, it collapses them; otherwise it expands them. Working and waiting sections stay unchanged. Explicit `/fold collapse` and `/fold expand` remain separate controls. Native shortcut dispatch preserves dialog and editor input ownership.
+`/fold collapse` closes eligible completed and historical sections; `/fold expand` opens all work sections. Working and waiting sections stay unchanged by collapse. These are separate, explicit controls.
 
 Native top-level spacers belong to the next canonical content block. Projection retains them with visible blocks and discards them with hidden blocks. Components that own internal spacing retain it. Expanded work children share an indentation level; final replies and user prompts share the main gutter.
 
